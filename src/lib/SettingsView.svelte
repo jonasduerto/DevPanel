@@ -6,7 +6,7 @@
   import Loader from "#lib/Loader.svelte";
   import CardHeader from "#lib/CardHeader.svelte";
   import DetailsOutput from "#lib/DetailsOutput.svelte";
-  import { Globe, Shield, FolderKey, Sun, Moon, Laptop, Check, RefreshCw } from "@lucide/svelte";
+  import { Globe, Shield, FolderKey, Sun, Moon, Laptop, Check, RefreshCw, Code2 } from "@lucide/svelte";
 
   let { theme, toggleTheme } = $props();
 
@@ -14,6 +14,7 @@
   let longPathsEnabled = $state(false);
   let tld = $state(".test");
   let themeMode = $state("dark"); // "system" | "dark" | "light"
+  let preferredEditor = $state("vscode");
 
   let caState = $state({ busy: false, error: "", operation: "" });
   let lpState = $state({ busy: false, error: "", operation: "" });
@@ -28,6 +29,7 @@
     longPathsEnabled = await invoke("get_long_paths_enabled");
     const config = await invoke("get_config");
     tld = config.tld;
+    preferredEditor = config.preferred_editor || "vscode";
 
     const savedTheme = localStorage.getItem("devpanel-theme-mode") || "dark";
     themeMode = savedTheme;
@@ -70,12 +72,40 @@
     }
     savingTld = false;
   }
+
+  async function changePreferredEditor(editor) {
+    if (editor === preferredEditor) return;
+    const previous = preferredEditor;
+    preferredEditor = editor;
+    try {
+      await invoke("set_preferred_editor", { editor });
+    } catch (e) {
+      preferredEditor = previous;
+      tldWarnings = [String(e)];
+    }
+  }
 </script>
 
 <div class="settings">
   <CardHeader title="Global Settings" subtitle="Configure system preferences, appearance, local domain suffixes, and SSL." />
 
   <div class="grid">
+    <div class="card">
+      <div class="card-header">
+        <Code2 class="icon text-accent" size={18} />
+        <div>
+          <h3>Preferred Editor</h3>
+          <p>Used by the IDE shortcut on every site card.</p>
+        </div>
+      </div>
+      <select class="settings-select" value={preferredEditor} onchange={(event) => changePreferredEditor(event.currentTarget.value)}>
+        <option value="vscode">VS Code</option>
+        <option value="cursor">Cursor</option>
+        <option value="sublime">Sublime Text</option>
+        <option value="claude">Claude Code</option>
+        <option value="codex">Codex</option>
+      </select>
+    </div>
     <!-- Theme & Appearance -->
     <div class="card">
       <div class="card-header">

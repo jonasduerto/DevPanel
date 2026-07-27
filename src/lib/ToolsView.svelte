@@ -1,6 +1,7 @@
 <script>
   // @ts-nocheck
   import { invoke } from "@tauri-apps/api/core";
+  import { openPath, openUrl } from "@tauri-apps/plugin-opener";
   import { onMount } from "svelte";
   import ConfirmDialog from "#lib/ConfirmDialog.svelte";
   import { invokeWith } from "#lib/tauri-utils.svelte.js";
@@ -33,6 +34,9 @@
   let output = $state("");
   let pending = $state(null);
   let serverTools = $state([]);
+  let cacheTools = $state([]);
+  let configPaths = $state({});
+  let logPaths = $state({});
   let showRecoveryInDashboard = $state(false);
   let mailpitUrl = $state("");
   let wordpressSites = $state([]);
@@ -55,6 +59,16 @@
       ]);
       const stateById = new Map(statuses);
       serverTools = services.filter((service) => service.id === "apache" || service.id === "nginx").map((service) => ({ ...service, status: stateById.get(service.id) ?? "Stopped" }));
+      cacheTools = services.filter((service) => service.id === "redis").map((service) => ({ ...service, status: stateById.get(service.id) ?? "Stopped" }));
+
+      const toolIds = [...serverTools.map((s) => s.id), "php", ...cacheTools.map((s) => s.id)];
+      const [configResults, logResults] = await Promise.all([
+        Promise.all(toolIds.map((id) => invoke("get_service_config_paths", { id }).catch(() => null))),
+        Promise.all(toolIds.map((id) => invoke("get_service_log_paths", { id }).catch(() => null))),
+      ]);
+      configPaths = Object.fromEntries(toolIds.map((id, i) => [id, configResults[i]]));
+      logPaths = Object.fromEntries(toolIds.map((id, i) => [id, logResults[i]]));
+
       const config = await invoke("get_config");
       mailpitUrl = config.mailpit_url || "http://localhost:8025";
       wordpressSites = workspaces.filter((workspace) => workspace.preset?.toLowerCase() === "wordpress");
@@ -122,9 +136,43 @@
     }, `${action} ${id}`);
   }
 
+  async function gracefulRestart(id) {
+    output = "";
+    await invokeWith(toolState, async () => {
+      const res = await invoke("graceful_restart_service", { id });
+      output = res.stdout || res.stderr || "Graceful restart completed";
+      notify(`${id} restarted gracefully`, "success");
+      await refresh();
+    }, `graceful restart ${id}`);
+  }
+
+  async function testConfig(id) {
+    output = "";
+    await invokeWith(toolState, async () => {
+      const res = await invoke("test_service_config", { id });
+      output = [res.stdout, res.stderr].filter(Boolean).join("\n") || "Config test passed";
+      notify(res.success ? `${id} config OK` : `${id} config test failed`, res.success ? "success" : "error");
+    }, `test ${id} config`);
+  }
+
+  async function viewLog(id) {
+    output = "";
+    await invokeWith(toolState, async () => {
+      const log = await invoke("read_service_log", { id, maxLines: 200 });
+      output = log || "(log is empty)";
+    }, `read ${id} log`);
+  }
+
+  async function openPathSafe(path) {
+    try {
+      await openPath(path);
+    } catch (e) {
+      output = String(e);
+    }
+  }
+
   async function openMailpit() {
     try {
-      const { openUrl } = await import("@tauri-apps/plugin-opener");
       await openUrl(mailpitUrl);
     } catch (e) {
       output = String(e);
@@ -240,7 +288,7 @@
           <Server size={18} class="text-accent" />
           <div class="header-info">
             <h3 class="card-title">Web Server Control</h3>
-            <p class="card-desc">Start, stop, or restart Apache and Nginx services.</p>
+            <p class="card-desc">Manage Apache and Nginx: service state, config, and logs.</p>
           </div>
         </div>
 
@@ -265,6 +313,25 @@
                   {/each}
                 </div>
               </div>
+
+              <div class="sub-section">
+                <h4 class="sub-title">{server.name} Configuration & Diagnostics</h4>
+                <div class="sub-body">
+                  {#if configPaths[server.id]?.main_config}
+                    <div class="meta-info">
+                      Config: <code>{configPaths[server.id].main_config}</code>
+                    </div>
+                  {/if}
+                  <div class="action-row">
+                    {#if configPaths[server.id]?.main_config}
+                      <button class="btn-secondary btn-xs" onclick={() => openPathSafe(configPaths[server.id].main_config)}>Open config</button>
+                    {/if}
+                    <button class="btn-secondary btn-xs" onclick={() => testConfig(server.id)} disabled={toolState.busy}>Test config</button>
+                    <button class="btn-secondary btn-xs" onclick={() => viewLog(server.id)} disabled={toolState.busy}>View error log</button>
+                    <button class="btn-secondary btn-xs" onclick={() => gracefulRestart(server.id)} disabled={toolState.busy}>Graceful restart</button>
+                  </div>
+                </div>
+              </div>
             {/each}
           </div>
         {:else}
@@ -278,11 +345,33 @@
           <Code2 size={18} class="text-accent" />
           <div class="header-info">
             <h3 class="card-title">PHP Tools</h3>
-            <p class="card-desc">PHP runtime configuration belongs to the shared Environment module.</p>
+            <p class="card-desc">Config, extensions, and log tools for the shared PHP runtime.</p>
           </div>
         </div>
+
+        <div class="sub-section">
+          <h4 class="sub-title">Configuration</h4>
+          <div class="sub-body">
+            {#if configPaths.php?.main_config}
+              <div class="meta-info">php.ini: <code>{configPaths.php.main_config}</code></div>
+            {:else}
+              <div class="hint">PHP not detected. Install it in <strong>Environment</strong>.</div>
+            {/if}
+            {#if configPaths.php?.extra_configs?.[0]}
+              <div class="meta-info">Extensions dir: <code>{configPaths.php.extra_configs[0]}</code></div>
+            {/if}
+            <div class="action-row">
+              {#if configPaths.php?.main_config}
+                <button class="btn-secondary btn-xs" onclick={() => openPathSafe(configPaths.php.main_config)}>Open php.ini</button>
+              {/if}
+              <button class="btn-secondary btn-xs" onclick={() => testConfig("php")} disabled={toolState.busy}>Test config</button>
+              <button class="btn-secondary btn-xs" onclick={() => viewLog("php")} disabled={toolState.busy}>View error log</button>
+            </div>
+          </div>
+        </div>
+
         <div class="placeholder-content">
-          <p>Install and select PHP versions in <strong>Environment</strong>. Every site uses that shared runtime; WordPress tools do not change PHP versions.</p>
+          <p>Install PHP versions, toggle extensions, and manage Xdebug in <strong>Environment</strong>. Every site uses that shared runtime; WordPress tools do not change PHP versions.</p>
         </div>
       </section>
 
@@ -324,12 +413,50 @@
           <Zap size={18} class="text-accent" />
           <div class="header-info">
             <h3 class="card-title">Cache Tools</h3>
-            <p class="card-desc">Redis and Memcached management.</p>
+            <p class="card-desc">Redis service state and configuration.</p>
           </div>
         </div>
-        <div class="placeholder-content">
-          <p>Cache service controls — Redis CLI, cache flush, key inspection — will appear here in a future update.</p>
-        </div>
+
+        {#if cacheTools.length}
+          <div class="server-list">
+            {#each cacheTools as server (server.id)}
+              <div class="server-row">
+                <div>
+                  <strong>{server.name}</strong>
+                  <span class="server-status">{server.status}</span>
+                </div>
+                <div class="action-row">
+                  {#each ["start", "restart", "stop"] as act (act)}
+                    <button class="btn-secondary btn-xs" onclick={() => serverAction(server.id, act)} disabled={toolState.busy}>
+                      {act === "start" ? "Start" : act === "restart" ? "Restart" : "Stop"}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+
+              <div class="sub-section">
+                <h4 class="sub-title">{server.name} Configuration</h4>
+                <div class="sub-body">
+                  {#if configPaths[server.id]?.main_config}
+                    <div class="meta-info">Config: <code>{configPaths[server.id].main_config}</code></div>
+                  {/if}
+                  {#if server.port}
+                    <div class="meta-info">Port: <code>{server.port}</code></div>
+                  {/if}
+                  {#if configPaths[server.id]?.main_config}
+                    <div class="action-row">
+                      <button class="btn-secondary btn-xs" onclick={() => openPathSafe(configPaths[server.id].main_config)}>Open config</button>
+                    </div>
+                  {/if}
+                </div>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="placeholder-content">
+            <p>No Redis server detected. Enable it in <strong>Environment</strong> → Modules (place <code>redis-server.exe</code> in <code>bin/redis/</code>) to manage it here.</p>
+          </div>
+        {/if}
       </section>
 
     {:else if activeCategory === "email"}

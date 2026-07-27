@@ -44,6 +44,7 @@
   let runningServicesCount = $derived(visibleServices.filter(s => s.status === "Running").length);
   let totalVisibleCount = $derived(visibleServices.length);
   let runningSitesCount = $derived(workspaces.filter(w => w.running).length);
+  let allVisibleRunning = $derived(totalVisibleCount > 0 && runningServicesCount === totalVisibleCount);
 
   onMount(() => {
     refresh();
@@ -79,6 +80,22 @@
       await invoke(`${action}_service`, { id });
     }, `${action === "start" ? "Iniciando" : "Deteniendo"} servicio`);
     await refresh();
+  }
+
+  async function setAllServices(action) {
+    const targets = visibleServices.filter((service) => action === "start" ? service.status !== "Running" : service.status === "Running");
+    if (!targets.length) return;
+    await invokeWith(toolState, async () => {
+      await Promise.all(targets.map((service) => invoke(`${action}_service`, { id: service.id })));
+    }, `${action === "start" ? "Starting" : "Stopping"} enabled services`);
+    await refresh();
+  }
+
+  async function syncHosts() {
+    await invokeWith(toolState, async () => {
+      const count = await invoke("sync_workspace_hosts");
+      toolState.error = `Hosts synchronized for ${count} site${count === 1 ? "" : "s"}.`;
+    }, "Synchronizing hosts");
   }
 
   async function loadServiceInfo(/** @type {string} */ id) {
@@ -125,7 +142,7 @@
         <span class="stat-label">System Services</span>
         <div class="stat-value-group">
           <span class="stat-value">{runningServicesCount} / {totalVisibleCount}</span>
-          <span class="pill-badge success">Active</span>
+          <span class="pill-badge" class:success={allVisibleRunning} class:warning={!allVisibleRunning}>{allVisibleRunning ? "Active" : "Stopped"}</span>
         </div>
       </div>
     </div>
@@ -151,10 +168,24 @@
         <Activity size={16} class="text-accent" />
         <h2 class="section-title">Environment Services</h2>
       </div>
-      <button class="btn-ghost btn-sm" onclick={refresh} disabled={toolState.busy}>
-        <RefreshCw size={12} class={toolState.busy ? "spin" : ""} />
-        <span>Refresh</span>
-      </button>
+      <div class="dashboard-actions">
+        <button class="btn-ghost btn-sm" onclick={() => setAllServices("start")} disabled={toolState.busy || allVisibleRunning || totalVisibleCount === 0}>
+          <Play size={12} fill="currentColor" />
+          <span>Start all</span>
+        </button>
+        <button class="btn-ghost btn-sm" onclick={() => setAllServices("stop")} disabled={toolState.busy || runningServicesCount === 0}>
+          <Square size={11} fill="currentColor" />
+          <span>Stop all</span>
+        </button>
+        <button class="btn-ghost btn-sm" onclick={syncHosts} disabled={toolState.busy || workspaces.length === 0} title="Synchronize local site domains to the Windows hosts file">
+          <Globe size={12} />
+          <span>Hosts sync</span>
+        </button>
+        <button class="btn-ghost btn-sm" onclick={refresh} disabled={toolState.busy}>
+          <RefreshCw size={12} class={toolState.busy ? "spin" : ""} />
+          <span>Refresh</span>
+        </button>
+      </div>
     </div>
 
     <div class="services-grid">

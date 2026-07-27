@@ -136,15 +136,6 @@
       </button>
       <button
         class="tab-btn"
-        class:active={view === "settings"}
-        onclick={() => (view = "settings")}
-        title="Settings"
-      >
-        <Settings size={14} />
-        <span>Settings</span>
-      </button>
-      <button
-        class="tab-btn"
         class:active={view === "tools"}
         onclick={() => (view = "tools")}
         title="Tools"
@@ -161,6 +152,9 @@
         {:else}
           <Moon size={15} />
         {/if}
+      </button>
+      <button class="icon-btn" class:active={view === "settings"} onclick={() => (view = "settings")} title="Settings">
+        <Settings size={15} />
       </button>
       <div class="divider"></div>
       <button class="icon-btn close-btn" onclick={closePanel} title="Close window">

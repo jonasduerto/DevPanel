@@ -9,6 +9,10 @@ fn default_tld() -> String {
     ".test".into()
 }
 
+fn default_preferred_editor() -> String {
+    "vscode".into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub mysql_version: Option<String>,
@@ -21,6 +25,9 @@ pub struct AppConfig {
     /// Local domain suffix new (and renamed) workspaces get, e.g. ".test".
     #[serde(default = "default_tld")]
     pub tld: String,
+    /// Editor opened by the primary IDE shortcut on every site card.
+    #[serde(default = "default_preferred_editor")]
+    pub preferred_editor: String,
     #[serde(default)]
     pub ports: PortConfig,
     #[serde(default)]
@@ -39,6 +46,7 @@ impl Default for AppConfig {
             panel_hotkey: Some("Ctrl+Shift+D".into()),
             active_stack_id: Some("apache-mariadb-php".into()),
             tld: default_tld(),
+            preferred_editor: default_preferred_editor(),
             ports: PortConfig::default(),
             show_recovery_in_dashboard: false,
             addons: BTreeMap::new(),
@@ -183,6 +191,11 @@ impl ConfigManager {
 
     pub fn set_tld(&mut self, tld: String) -> Result<(), String> {
         self.config.tld = tld;
+        self.save()
+    }
+
+    pub fn set_preferred_editor(&mut self, editor: String) -> Result<(), String> {
+        self.config.preferred_editor = editor;
         self.save()
     }
 

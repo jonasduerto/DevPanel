@@ -15,7 +15,7 @@ use commands::addon_commands::{
 use commands::config_commands::{
     check_port_availability, enable_long_paths, get_config, get_long_paths_enabled, set_ports,
     suggest_available_web_port,
-    set_show_recovery_in_dashboard, set_tld,
+    set_preferred_editor, set_show_recovery_in_dashboard, set_tld,
 };
 use commands::database_tools_commands::{
     create_database_user, database_backup_all, database_repair_all, database_restore_backup,
@@ -37,7 +37,7 @@ use commands::service_control_commands::{
     get_service_config_paths, get_service_log_paths, graceful_restart_service, read_service_log,
     reload_service, test_service_config,
 };
-use commands::ssl_commands::{finish_domain_setup, get_ca_trusted, trust_local_ca};
+use commands::ssl_commands::{finish_domain_setup, get_ca_trusted, sync_workspace_hosts, trust_local_ca};
 use commands::stack_commands::{
     get_active_stack, get_stacks, set_active_stack, start_stack, stop_stack,
 };
@@ -285,9 +285,11 @@ pub fn run() {
             get_ca_trusted,
             trust_local_ca,
             finish_domain_setup,
+            sync_workspace_hosts,
             set_tld,
             set_ports,
             set_show_recovery_in_dashboard,
+            set_preferred_editor,
             get_long_paths_enabled,
             enable_long_paths,
             get_database_tool_status,

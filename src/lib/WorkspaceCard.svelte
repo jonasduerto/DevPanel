@@ -1,6 +1,7 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
   import { openPath, openUrl } from "@tauri-apps/plugin-opener";
+  import { onMount } from "svelte";
   import ConfirmDialog from "#lib/ConfirmDialog.svelte";
   import DebugDialog from "#lib/DebugDialog.svelte";
   import WordPressSitePanel from "#lib/WordPressSitePanel.svelte";
@@ -48,9 +49,28 @@
   let phpOverrideUnavailable = $state(false);
   let toggleState = $state({ busy: false, error: "", operation: "" });
   let profileState = $state({ busy: false, error: "", operation: "" });
+  let preferredEditor = $state("vscode");
+
+  onMount(async () => {
+    try {
+      const config = await invoke("get_config");
+      preferredEditor = config.preferred_editor || "vscode";
+    } catch (e) {
+      error = String(e);
+    }
+  });
 
   function isWordPressSite() {
     return workspace.preset?.toLowerCase() === "wordpress";
+  }
+
+  function phpBadgeLabel() {
+    const version = workspace.runtime_profile?.php_version;
+    return version && version !== "inherit" ? `PHP ${version}` : "PHP default";
+  }
+
+  function preferredEditorLabel() {
+    return { vscode: "IDE", cursor: "Cursor", sublime: "Sublime", claude: "Claude", codex: "Codex" }[preferredEditor] || "IDE";
   }
 
   async function toggleSite() {
@@ -174,22 +194,20 @@
 
     <div class="header-right">
       <span class="preset-tag">{workspace.preset}</span>
+      <span class="preset-tag php-tag" title="Site PHP runtime">{phpBadgeLabel()}</span>
       <DropdownMenu bind:open={showMenu} label="Site actions" title="Site actions">
-        <div class="menu-group-label">Detalles</div>
-        <button onclick={() => showDetails("configuration")}>Site Configuration</button>
-        <button onclick={() => showDetails("database")}>Database</button>
+        <div class="menu-group-label">Details</div>
+        <button onclick={() => showDetails("configuration")}>Site configuration</button>
         {#if isWordPressSite()}<button onclick={() => showDetails("wordpress")}>WP Tools</button>{/if}
         <div class="menu-sep"></div>
-        <div class="menu-group-label">Open in editor</div>
+        <div class="menu-group-label">Open with another editor</div>
         <div class="menu-editors">
-          <button onclick={() => runTool("vscode")}>VS Code</button>
-          <button onclick={() => runTool("cursor")}>Cursor</button>
-          <button onclick={() => runTool("sublime")}>Sublime</button>
-          <button onclick={() => runTool("claude")}>Claude</button>
-          <button onclick={() => runTool("codex")}>Codex</button>
+          {#each [["vscode", "VS Code"], ["cursor", "Cursor"], ["sublime", "Sublime"], ["claude", "Claude"], ["codex", "Codex"]] as [editor, label]}
+            {#if editor !== preferredEditor}<button onclick={() => runTool(editor)}>{label}</button>{/if}
+          {/each}
         </div>
         <div class="menu-sep"></div>
-        <div class="menu-group-label">Maintenance</div>
+        <div class="menu-group-label">Maintenance & diagnostics</div>
         <button onclick={repairSite} disabled={toggleState.busy}>Repair database</button>
         <button onclick={() => { showMenu = false; showDebug = true; }}>Diagnostics & logs</button>
         <div class="menu-sep"></div>
@@ -199,7 +217,7 @@
   </header>
 
   <div class="site-badges">
-    <div class="badge" class:secure={workspace.https_ready}>
+    <button class="badge ssl-badge" class:secure={workspace.https_ready} onclick={() => showDetails("configuration")} title="Open certificate and HTTPS settings">
       {#if workspace.https_ready}
         <ShieldCheck size={12} />
         <span>HTTPS</span>
@@ -207,7 +225,7 @@
         <Shield size={12} />
         <span>HTTP</span>
       {/if}
-    </div>
+    </button>
 
     <div class="badge status-badge" class:running={workspace.running}>
       <span>{workspace.running ? "Running" : "Stopped"}</span>
@@ -219,6 +237,7 @@
     onclick={toggleSite}
     busy={toggleState.busy}
     busyLabel={toggleState.operation || "Processing..."}
+    title={workspace.running ? "Stop this site and release unused dependencies" : "Start this site and its required enabled dependencies"}
   >
     {#if workspace.running}
       <Square size={13} fill="currentColor" />
@@ -243,6 +262,14 @@
     <button class="action-btn" onclick={() => runTool("folder")} title="Open folder">
       <Folder size={12} />
       <span>Folder</span>
+    </button>
+    <button class="action-btn" onclick={() => runTool(preferredEditor)} oncontextmenu={(event) => { event.preventDefault(); showMenu = true; }} title="Open in preferred editor. Right-click to choose another editor.">
+      <Code size={12} />
+      <span>{preferredEditorLabel()}</span>
+    </button>
+    <button class="action-btn" onclick={() => showDetails("database")} title="Open site database tools">
+      <Database size={12} />
+      <span>DB</span>
     </button>
     <button class="action-btn" onclick={() => runTool("cmder")} title="Open terminal">
       <Terminal size={12} />

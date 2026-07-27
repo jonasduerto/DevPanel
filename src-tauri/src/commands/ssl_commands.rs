@@ -113,3 +113,25 @@ pub async fn finish_domain_setup(
 
     Ok(warnings)
 }
+
+/// Reasserts all registered local domains in the Windows hosts file. This is
+/// intentionally explicit because Windows will show one UAC prompt for the
+/// batch edit.
+#[tauri::command]
+pub async fn sync_workspace_hosts(state: tauri::State<'_, AppState>) -> Result<usize, String> {
+    let domains = {
+        let store = state.workspace_store.lock().await;
+        store.list().into_iter().map(|workspace| workspace.domain).collect::<Vec<_>>()
+    };
+    let count = domains.len();
+    tokio::task::spawn_blocking(move || {
+        let operations = domains
+            .into_iter()
+            .map(|domain| (crate::ssl::hosts::HostsOp::Add, domain))
+            .collect::<Vec<_>>();
+        crate::ssl::hosts::apply_batch(&operations)
+    })
+    .await
+    .map_err(|e| format!("Hosts sync task panicked: {e}"))??;
+    Ok(count)
+}

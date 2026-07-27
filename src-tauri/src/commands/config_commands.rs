@@ -23,6 +23,18 @@ pub async fn set_show_recovery_in_dashboard(
     config.set_show_recovery_in_dashboard(enabled)
 }
 
+#[tauri::command]
+pub async fn set_preferred_editor(
+    editor: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if !["vscode", "cursor", "sublime", "claude", "codex"].contains(&editor.as_str()) {
+        return Err("Unsupported editor preference.".into());
+    }
+    let mut config = state.config.lock().await;
+    config.set_preferred_editor(editor)
+}
+
 /// Whether Windows' NTFS long-path support is on. Read-only, no elevation.
 #[tauri::command]
 pub async fn get_long_paths_enabled() -> Result<bool, String> {
