@@ -19,8 +19,12 @@ npm run tauri dev
 To create a local Windows package:
 
 ```powershell
-npm run tauri build
+.\tools\build-windows-release.ps1
 ```
+
+The command writes a portable ZIP, MSI installer, NSIS setup executable, and
+SHA-256 checksums to `release/`. That directory is local-only and is excluded
+from Git.
 
 ## Project information
 

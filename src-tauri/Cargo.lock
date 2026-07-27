@@ -778,7 +778,7 @@ dependencies = [
 
 [[package]]
 name = "devpanel"
-version = "0.2.0-beta.1"
+version = "0.2.0-2"
 dependencies = [
  "log",
  "rcgen",
