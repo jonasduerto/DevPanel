@@ -421,6 +421,158 @@ pub fn apply_extension_overrides(root: &std::path::Path) {
     }
 }
 
+const XDEBUG_MODES: [&str; 4] = ["off", "debug", "profile", "trace"];
+
+/// `data/config/php-xdebug.json` — persisted Xdebug mode, independent of
+/// which PHP version's `php.ini` is currently active. Mirrors
+/// `extension_overrides_path`.
+fn xdebug_override_path(root: &std::path::Path) -> PathBuf {
+    root.join("data/config/php-xdebug.json")
+}
+
+fn xdebug_output_dir(root: &std::path::Path) -> PathBuf {
+    root.join("data/xdebug")
+}
+
+fn load_xdebug_mode(root: &std::path::Path) -> String {
+    fs::read_to_string(xdebug_override_path(root))
+        .ok()
+        .and_then(|contents| serde_json::from_str::<std::collections::HashMap<String, String>>(&contents).ok())
+        .and_then(|map| map.get("mode").cloned())
+        .unwrap_or_else(|| "off".into())
+}
+
+/// Rewrites `xdebug.mode=`/`xdebug.output_dir=` in the active `php.ini`,
+/// appending the directives if Xdebug's own ini block doesn't declare them
+/// yet. Shared by `set_xdebug_mode` and `apply_xdebug_override` (called after
+/// a PHP version switch, same pattern as `apply_extension_overrides`).
+fn write_xdebug_mode(root: &std::path::Path, mode: &str) -> Result<(), String> {
+    let ini = devpanel_php_ini(root)?;
+    let original = fs::read_to_string(&ini).map_err(|error| error.to_string())?;
+    let output_dir = xdebug_output_dir(root);
+    fs::create_dir_all(&output_dir).map_err(|error| error.to_string())?;
+    let output_dir = output_dir.to_string_lossy().replace('\\', "/");
+
+    let mut saw_mode = false;
+    let mut saw_output_dir = false;
+    let rewritten = original
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start_matches(';').trim();
+            if trimmed.to_ascii_lowercase().starts_with("xdebug.mode") {
+                saw_mode = true;
+                format!("xdebug.mode={mode}")
+            } else if trimmed.to_ascii_lowercase().starts_with("xdebug.output_dir") {
+                saw_output_dir = true;
+                format!("xdebug.output_dir=\"{output_dir}\"")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\r\n");
+
+    let mut final_contents = rewritten;
+    if !saw_mode {
+        final_contents.push_str(&format!("\r\nxdebug.mode={mode}\r\n"));
+    }
+    if !saw_output_dir {
+        final_contents.push_str(&format!("xdebug.output_dir=\"{output_dir}\"\r\n"));
+    }
+    fs::write(&ini, final_contents).map_err(|e| e.to_string())
+}
+
+/// Reapplies the persisted Xdebug mode onto whichever PHP version is
+/// currently active — called alongside `apply_extension_overrides` after a
+/// PHP version switch.
+pub fn apply_xdebug_override(root: &std::path::Path) {
+    let mode = load_xdebug_mode(root);
+    if mode == "off" {
+        return;
+    }
+    let _ = write_xdebug_mode(root, &mode);
+}
+
+#[tauri::command]
+pub async fn get_xdebug_mode(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let root = state.service_mgr.root().clone();
+    tokio::task::spawn_blocking(move || load_xdebug_mode(&root))
+        .await
+        .map_err(|error| format!("Xdebug mode task panicked: {error}"))
+}
+
+#[tauri::command]
+pub async fn set_xdebug_mode(
+    mode: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    if !XDEBUG_MODES.contains(&mode.as_str()) {
+        return Err(format!(
+            "Unsupported Xdebug mode '{mode}' — choose one of {XDEBUG_MODES:?}"
+        ));
+    }
+    let root = state.service_mgr.root().clone();
+    tokio::task::spawn_blocking(move || {
+        let overrides = std::collections::HashMap::from([("mode".to_string(), mode.clone())]);
+        let path = xdebug_override_path(&root);
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        }
+        let json = serde_json::to_string_pretty(&overrides).map_err(|e| e.to_string())?;
+        fs::write(&path, json).map_err(|e| e.to_string())?;
+        write_xdebug_mode(&root, &mode)
+    })
+    .await
+    .map_err(|error| format!("Xdebug mode task panicked: {error}"))?
+}
+
+#[derive(Serialize)]
+pub struct XdebugOutputFile {
+    pub name: String,
+    pub size_bytes: u64,
+    pub modified_unix: u64,
+}
+
+#[tauri::command]
+pub async fn list_xdebug_output(state: tauri::State<'_, AppState>) -> Result<Vec<XdebugOutputFile>, String> {
+    let root = state.service_mgr.root().clone();
+    tokio::task::spawn_blocking(move || {
+        let dir = xdebug_output_dir(&root);
+        let mut files = fs::read_dir(&dir)
+            .ok()
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                let metadata = entry.metadata().ok()?;
+                let modified_unix = metadata
+                    .modified()
+                    .ok()
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .map(|duration| duration.as_secs())
+                    .unwrap_or(0);
+                Some(XdebugOutputFile {
+                    name: entry.file_name().to_string_lossy().into_owned(),
+                    size_bytes: metadata.len(),
+                    modified_unix,
+                })
+            })
+            .collect::<Vec<_>>();
+        files.sort_by(|a, b| b.modified_unix.cmp(&a.modified_unix));
+        Ok(files)
+    })
+    .await
+    .map_err(|error| format!("Xdebug output listing task panicked: {error}"))?
+}
+
+#[tauri::command]
+pub async fn open_xdebug_output_folder(state: tauri::State<'_, AppState>) -> Result<String, String> {
+    let root = state.service_mgr.root().clone();
+    let dir = xdebug_output_dir(&root);
+    fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
 fn extension_line_matches(line: &str, file_name: &str) -> Option<bool> {
     let trimmed = line.trim();
     let directive = trimmed.trim_start_matches(';').trim();
@@ -961,6 +1113,27 @@ fn find_dev_tool(root: &std::path::Path, directory: &str, names: &[&str]) -> Opt
     names
         .iter()
         .find_map(|name| find_binary_in_bin(root, directory, name))
+}
+
+/// Launches HeidiSQL standalone — used by the Tools "Database GUI Launcher"
+/// card, which isn't scoped to any one site. `launch_workspace_tool`'s
+/// "heidisql" branch is left as-is for the per-site menu since HeidiSQL
+/// doesn't actually take the site path either; this just skips the
+/// workspace-id lookup that call doesn't need.
+#[tauri::command]
+pub async fn launch_heidisql(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    let root = state.service_mgr.root().clone();
+    tokio::task::spawn_blocking(move || {
+        Command::new(
+            find_dev_tool(&root, "heidisql", &["heidisql.exe", "HeidiSQL.exe"])
+                .ok_or_else(|| "HeidiSQL is not installed in DevPanel/bin/heidisql.".to_string())?,
+        )
+        .spawn()
+        .map_err(|error| format!("Could not start HeidiSQL: {error}"))?;
+        Ok(())
+    })
+    .await
+    .map_err(|error| format!("HeidiSQL launch task panicked: {error}"))?
 }
 
 /// Starts an allow-listed developer application that is owned by DevPanel's

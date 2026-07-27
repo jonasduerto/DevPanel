@@ -2,6 +2,7 @@ pub mod addon_commands;
 pub mod config_commands;
 pub mod database_tools_commands;
 pub mod dev_tools_commands;
+pub mod port_commands;
 pub mod service_commands;
 pub mod service_control_commands;
 pub mod ssl_commands;

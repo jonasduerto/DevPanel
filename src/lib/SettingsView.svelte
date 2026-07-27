@@ -6,30 +6,22 @@
   import Loader from "#lib/Loader.svelte";
   import CardHeader from "#lib/CardHeader.svelte";
   import DetailsOutput from "#lib/DetailsOutput.svelte";
-  import { Globe, Shield, FolderKey, Sun, Moon, Laptop, Check, RefreshCw, Code2, Download } from "@lucide/svelte";
+  import { FolderKey, Sun, Moon, Laptop, Check, Code2, Download } from "@lucide/svelte";
 
   let { theme, toggleTheme, onUpdatePreferenceChanged } = $props();
 
-  let caTrusted = $state(false);
   let longPathsEnabled = $state(false);
-  let tld = $state(".test");
   let themeMode = $state("dark"); // "system" | "dark" | "light"
   let preferredEditor = $state("vscode");
   let updateChecksEnabled = $state(true);
 
-  let caState = $state({ busy: false, error: "", operation: "" });
   let lpState = $state({ busy: false, error: "", operation: "" });
-  let savingTld = $state(false);
   /** @type {string[]} */
   let tldWarnings = $state([]);
 
-  const TLDS = [".dp", ".dev", ".local", ".test"];
-
   onMount(async () => {
-    caTrusted = await invoke("get_ca_trusted");
     longPathsEnabled = await invoke("get_long_paths_enabled");
     const config = await invoke("get_config");
-    tld = config.tld;
     preferredEditor = config.preferred_editor || "vscode";
     updateChecksEnabled = config.update_checks_enabled !== false;
 
@@ -48,31 +40,11 @@
     document.documentElement.setAttribute("data-theme", resolvedTheme);
   }
 
-  async function trustCA() {
-    await invokeWith(caState, async () => {
-      await invoke("trust_ca");
-      caTrusted = await invoke("get_ca_trusted");
-    }, "Trusting Root CA", { toastSuccess: "Root CA trusted in Windows" });
-  }
-
   async function enableLongPaths() {
     await invokeWith(lpState, async () => {
       await invoke("enable_long_paths");
       longPathsEnabled = await invoke("get_long_paths_enabled");
     }, "Enabling Windows long paths", { toastSuccess: "NTFS long paths enabled" });
-  }
-
-  async function changeTld(newTld) {
-    if (newTld === tld || savingTld) return;
-    savingTld = true;
-    tldWarnings = [];
-    try {
-      tldWarnings = await invoke("set_tld", { tld: newTld });
-      tld = newTld;
-    } catch (e) {
-      tldWarnings = [String(e)];
-    }
-    savingTld = false;
   }
 
   async function changePreferredEditor(editor) {
@@ -102,7 +74,7 @@
 </script>
 
 <div class="settings">
-  <CardHeader title="Global Settings" subtitle="Configure system preferences, appearance, local domain suffixes, and SSL." />
+  <CardHeader title="Global Settings" subtitle="Configure system preferences, appearance, editor, and update checks." />
 
   <div class="grid">
     <div class="card">
@@ -171,62 +143,9 @@
       </div>
     </div>
 
-    <!-- TLD Suffix -->
-    <div class="card">
-      <div class="card-header">
-        <Globe class="icon text-accent" size={18} />
-        <div>
-          <h3>Local Domain Suffix (TLD)</h3>
-          <p>The domain extension assigned to your local web sites.</p>
-        </div>
-      </div>
-      <div class="tld-selector">
-        {#each TLDS as t}
-          <button
-            class="tld-btn"
-            class:active={tld === t}
-            disabled={savingTld}
-            onclick={() => changeTld(t)}
-          >
-            {t}
-          </button>
-        {/each}
-      </div>
-      {#if tldWarnings.length > 0}
-        <DetailsOutput title="TLD Update Warnings" output={tldWarnings.join("\n")} type="warning" />
-      {/if}
-    </div>
-
-    <!-- SSL Certificate Trust -->
-    <div class="card">
-      <div class="card-header">
-        <Shield class="icon text-accent" size={18} />
-        <div>
-          <h3>HTTPS / SSL Root Certificate</h3>
-          <p>Trust DevPanel's local Certificate Authority for instant green-lock HTTPS.</p>
-        </div>
-      </div>
-      <div class="action-row">
-        <div class="status-indicator">
-          {#if caTrusted}
-            <span class="pill-badge success">Trusted in Windows</span>
-          {:else}
-            <span class="pill-badge warning">Not trusted yet</span>
-          {/if}
-        </div>
-        <button class="btn-primary" disabled={caTrusted || caState.busy} onclick={trustCA}>
-          {#if caState.busy}
-            <Loader size={14} />
-          {:else}
-            <Check size={14} />
-          {/if}
-          <span>{caTrusted ? "CA Certificate Installed" : "Trust Root CA"}</span>
-        </button>
-      </div>
-      {#if caState.error}
-        <DetailsOutput title="CA Error" output={caState.error} type="error" />
-      {/if}
-    </div>
+    {#if tldWarnings.length > 0}
+      <DetailsOutput title="Settings Warnings" output={tldWarnings.join("\n")} type="warning" />
+    {/if}
 
     <!-- Windows Long Paths -->
     <div class="card">

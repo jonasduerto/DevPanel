@@ -29,15 +29,17 @@ use commands::dev_tools_commands::{
     wp_security_audit, wp_security_harden, wp_site_health, wp_theme_activate, wp_theme_list,
     wp_transient_cleanup, wp_update_all, wp_workspace_info,
 };
+use commands::port_commands::{kill_process, list_known_ports};
 use commands::service_commands::{
     get_service_statuses, get_services, restart_service, start_service, stop_service,
 };
 use commands::service_control_commands::{
-    get_service_config_paths, get_service_log_paths, graceful_restart_service, read_service_log,
-    reload_service, test_service_config,
+    get_service_config_paths, get_service_log_paths, graceful_restart_service,
+    list_installed_web_apps, read_service_log, reload_service, test_service_config,
 };
 use commands::ssl_commands::{
-    finish_domain_setup, get_ca_trusted, sync_workspace_hosts, trust_local_ca,
+    finish_domain_setup, get_ca_trusted, list_devpanel_hosts_entries, remove_hosts_entry,
+    sync_workspace_hosts, trust_local_ca,
 };
 use commands::stack_commands::{
     get_active_stack, get_stacks, set_active_stack, start_stack, stop_stack,
@@ -45,10 +47,12 @@ use commands::stack_commands::{
 use commands::update_commands::check_for_update;
 use commands::workspace_commands::{
     create_workspace, delete_workspace_all, delete_workspace_config, delete_workspace_data,
-    get_php_extensions, get_runtime_catalog, get_site_presets, get_workspace_paths, install_xdebug,
-    launch_workspace_editor, launch_workspace_tool, list_workspaces, open_workspace_folder,
-    refresh_runtime_detection, retry_database_setup, set_php_extension,
-    set_workspace_runtime_profile, start_workspace, stop_workspace, uninstall_workspace_keep_data,
+    get_php_extensions, get_runtime_catalog, get_site_presets, get_workspace_paths,
+    get_xdebug_mode, install_xdebug, launch_heidisql, launch_workspace_editor,
+    launch_workspace_tool, list_workspaces, list_xdebug_output, open_workspace_folder,
+    open_xdebug_output_folder, refresh_runtime_detection, retry_database_setup,
+    set_php_extension, set_workspace_runtime_profile, set_xdebug_mode, start_workspace,
+    stop_workspace, uninstall_workspace_keep_data,
 };
 use config::ConfigManager;
 use service::ServiceManager;
@@ -292,6 +296,8 @@ pub fn run() {
             trust_local_ca,
             finish_domain_setup,
             sync_workspace_hosts,
+            list_devpanel_hosts_entries,
+            remove_hosts_entry,
             set_tld,
             set_ports,
             set_show_recovery_in_dashboard,
@@ -349,6 +355,14 @@ pub fn run() {
             start_addon,
             stop_addon,
             restart_addon,
+            get_xdebug_mode,
+            set_xdebug_mode,
+            list_xdebug_output,
+            open_xdebug_output_folder,
+            launch_heidisql,
+            list_installed_web_apps,
+            list_known_ports,
+            kill_process,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

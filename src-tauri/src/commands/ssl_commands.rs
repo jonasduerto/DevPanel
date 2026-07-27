@@ -114,6 +114,23 @@ pub async fn finish_domain_setup(
     Ok(warnings)
 }
 
+/// Lists domains DevPanel has written into the hosts file, for the Tools
+/// "DNS & Hosts" cleanup view — read-only, no elevation.
+#[tauri::command]
+pub fn list_devpanel_hosts_entries() -> Result<Vec<String>, String> {
+    ssl::hosts::list_devpanel_entries()
+}
+
+/// Removes one stale hosts entry (e.g. after a workspace folder was deleted
+/// outside DevPanel). Goes through the same on-demand elevated helper as
+/// every other hosts-file write.
+#[tauri::command]
+pub async fn remove_hosts_entry(domain: String) -> Result<(), String> {
+    tokio::task::spawn_blocking(move || ssl::hosts::remove_entry(&domain))
+        .await
+        .map_err(|error| format!("Remove hosts entry task panicked: {error}"))?
+}
+
 /// Reasserts all registered local domains in the Windows hosts file. This is
 /// intentionally explicit because Windows will show one UAC prompt for the
 /// batch edit.

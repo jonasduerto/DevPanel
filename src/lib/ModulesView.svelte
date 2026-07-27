@@ -55,6 +55,9 @@
 
   // MySQL-specific tools (root password, create DB+user, backups, version)
   let mysqlStatus = $state(null);
+  // Authenticates repair/backup/restore/create-user — MySQL requires root's
+  // password on every privileged call, it's never cached server-side.
+  let mysqlAuthPassword = $state("");
   let mysqlCurrentPassword = $state("");
   let mysqlNewPassword = $state("");
   let mysqlDbName = $state("");
@@ -85,7 +88,6 @@
       if (cfg && cfg.ports) {
         appPorts = { ...cfg.ports };
       }
-      mailpitUrl = cfg?.mailpit_url || "http://127.0.0.1:8025";
       mysqlStatus = dbStatus;
       mysqlBackups = backups;
     } catch (e) {
@@ -114,27 +116,23 @@
     try {
       let msg = "Operation completed";
       if (action === "root") {
-        await invoke("update_mysql_root_password", { currentPassword: mysqlCurrentPassword, newPassword: mysqlNewPassword });
+        msg = await invoke("set_database_root_password", { currentPassword: mysqlCurrentPassword, newPassword: mysqlNewPassword });
         mysqlCurrentPassword = "";
         mysqlNewPassword = "";
-        msg = "MySQL root password updated";
       } else if (action === "user") {
         if (!mysqlDbName || !mysqlDbUser || !mysqlDbPassword) throw new Error("Fill in all 3 fields.");
-        await invoke("create_database_and_user", { dbName: mysqlDbName, username: mysqlDbUser, password: mysqlDbPassword });
+        msg = await invoke("create_database_user", { databaseName: mysqlDbName, username: mysqlDbUser, password: mysqlDbPassword, rootPassword: mysqlAuthPassword });
         mysqlDbName = "";
         mysqlDbUser = "";
         mysqlDbPassword = "";
-        msg = "Database and user created";
       } else if (action === "backup") {
-        const path = await invoke("backup_all_databases");
+        const path = await invoke("database_backup_all", { rootPassword: mysqlAuthPassword });
         msg = `Backed up at ${path}`;
       } else if (action === "repair") {
-        const res = await invoke("repair_mysql_tables");
-        msg = res.stdout || res.stderr || "Repair completed";
+        msg = await invoke("database_repair_all", { rootPassword: mysqlAuthPassword });
       } else if (action.startsWith("restore:")) {
         const backupName = action.slice(8);
-        const res = await invoke("restore_database_backup", { backupName });
-        msg = res.stdout || res.stderr || "Restore completed";
+        msg = await invoke("database_restore_backup", { backupName, rootPassword: mysqlAuthPassword });
       }
       mysqlOutput = msg;
       successMsg = msg;
@@ -150,7 +148,7 @@
     error = "";
     mysqlState.busy = true;
     try {
-      await invoke("set_mysql_version", { version: version || null });
+      await invoke("set_database_version", { version: version || null });
       successMsg = "MySQL version updated";
       setTimeout(() => (successMsg = ""), 4000);
       await loadData();
@@ -755,7 +753,15 @@
                         </div>
 
                         <div class="setting-item full-width">
-                          <span class="setting-label">Root Password</span>
+                          <span class="setting-label">Root Password (authenticates the tools below)</span>
+                          <div class="buttons-row">
+                            <input type="password" class="port-input" style="width: 140px" bind:value={mysqlAuthPassword} autocomplete="current-password" placeholder="Root password" />
+                          </div>
+                          <span class="setting-hint">Required by MySQL for backups, repair, restore, and creating databases. Never stored.</span>
+                        </div>
+
+                        <div class="setting-item full-width">
+                          <span class="setting-label">Change Root Password</span>
                           <div class="buttons-row">
                             <input type="password" class="port-input" style="width: 140px" bind:value={mysqlCurrentPassword} autocomplete="current-password" placeholder="Current password" />
                             <input type="password" class="port-input" style="width: 140px" bind:value={mysqlNewPassword} autocomplete="new-password" placeholder="New password" />

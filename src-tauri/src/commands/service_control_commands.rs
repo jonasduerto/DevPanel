@@ -247,6 +247,50 @@ pub fn read_service_log(
     Ok(lines[lines.len() - take..].join("\n"))
 }
 
+// ====================== WEB APP LAUNCHER ======================
+
+#[derive(Serialize)]
+pub struct InstalledWebApp {
+    pub id: String,
+    pub label: String,
+    pub url: String,
+}
+
+/// Lists the optional PHP web apps (phpMyAdmin, Adminer, ...) that Apache
+/// already knows how to alias (see `generate_apache_app_aliases` in
+/// `service::manager`) and that are actually installed under `apps/`. Only
+/// meaningful while Apache is the active web server — Nginx has no
+/// equivalent alias wiring.
+#[tauri::command]
+pub async fn list_installed_web_apps(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<InstalledWebApp>, String> {
+    let root = state.service_mgr.root().clone();
+    let port = { state.config.lock().await.get().ports.apache };
+    let apache_running = matches!(
+        state.service_mgr.status("apache").await,
+        crate::service::types::ServiceStatus::Running
+    );
+    if !apache_running {
+        return Ok(Vec::new());
+    }
+    const APPS: [(&str, &str, &str); 4] = [
+        ("phpmyadmin", "phpMyAdmin", "phpMyAdmin"),
+        ("adminer", "Adminer", "Adminer"),
+        ("phpredisadmin", "phpRedisAdmin", "phpRedisAdmin"),
+        ("phpmemcachedadmin", "phpMemcachedAdmin", "phpMemcachedAdmin"),
+    ];
+    Ok(APPS
+        .into_iter()
+        .filter(|(_, folder, _)| root.join("apps").join(folder).join("index.php").is_file())
+        .map(|(url, _, label)| InstalledWebApp {
+            id: url.into(),
+            label: label.into(),
+            url: format!("http://127.0.0.1:{port}/{url}"),
+        })
+        .collect())
+}
+
 // ====================== GRACEFUL RESTART ======================
 
 #[tauri::command]

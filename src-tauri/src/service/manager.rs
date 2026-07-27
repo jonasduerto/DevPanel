@@ -431,6 +431,7 @@ impl ServiceManager {
             // just got selected — otherwise switching versions silently
             // resets to that version's own shipped php.ini defaults.
             crate::commands::workspace_commands::apply_extension_overrides(&self.root);
+            crate::commands::workspace_commands::apply_xdebug_override(&self.root);
 
             // Overridden here (not baked into php.ini) so these stay correct
             // no matter where the portable root ends up — a static php.ini

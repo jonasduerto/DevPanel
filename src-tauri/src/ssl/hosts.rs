@@ -17,6 +17,19 @@ fn entry_domain(line: &str) -> Option<&str> {
     bare.split_whitespace().nth(1)
 }
 
+/// Lists every domain DevPanel has written into the hosts file (tagged
+/// `# devpanel`), for the Tools "DNS & Hosts" cleanup view. Read-only, no
+/// elevation needed.
+pub fn list_devpanel_entries() -> Result<Vec<String>, String> {
+    let contents = fs::read_to_string(hosts_file_path()).map_err(|e| e.to_string())?;
+    Ok(contents
+        .lines()
+        .filter(|line| line.trim_end().to_ascii_lowercase().ends_with("# devpanel"))
+        .filter_map(entry_domain)
+        .map(str::to_string)
+        .collect())
+}
+
 pub fn has_entry(domain: &str) -> Result<bool, String> {
     let contents = fs::read_to_string(hosts_file_path()).map_err(|e| e.to_string())?;
     Ok(contents
