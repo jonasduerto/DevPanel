@@ -1,0 +1,60 @@
+# ─── Node / JS ──────────────────────────────────────────────────
+node_modules/
+build/
+.svelte-kit/
+*.tsbuildinfo
+
+# ─── Rust ───────────────────────────────────────────────────────
+src-tauri/target/
+src-tauri/gen/
+
+# ─── OpenCode agent ────────────────────────────────────────────
+.opencode/node_modules/
+.opencode/.cache/
+
+# ─── Editor / IDE ──────────────────────────────────────────────
+.vscode/*.local.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Environment / secrets ─────────────────────────────────────
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.pfx
+*.cert
+credentials.json
+secrets/
+
+# ─── DevPanel runtimes (portable binaries) ─────────────────────
+bin/
+data/
+www/
+micro-wp/
+
+# ─── DevPanel generated / build ────────────────────────────────
+release/
+*.msi
+*.nsis.zip
+*.log
+*.bak
+
+# ─── OS / temp ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.tmp
+
+# ─── Misc ──────────────────────────────────────────────────────
+# Local config overrides (not to be shared)
+*.local
+
+# Nested git artifact (if any)
+DevPanel/

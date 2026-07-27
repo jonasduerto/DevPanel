@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri"
+
+      - name: Build Tauri app
+        run: npm run tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload MSI
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevPanel-x64.msi
+          path: src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: warn
+
+      - name: Upload NSIS
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevPanel-x64.nsis.zip
+          path: src-tauri/target/release/bundle/nsis/*.zip
+          if-no-files-found: warn
+
+      - name: Create portable Windows ZIP
+        shell: pwsh
+        run: |
+          $releaseDir = "src-tauri/target/release"
+          $zipPath = "$releaseDir/DevPanel-windows-x64.zip"
+          Compress-Archive -Path "$releaseDir/devpanel.exe" -DestinationPath $zipPath -Force
+
+      - name: Upload portable ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevPanel-windows-x64.zip
+          path: src-tauri/target/release/DevPanel-windows-x64.zip
+          if-no-files-found: error
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            src-tauri/target/release/bundle/msi/*.msi
+            src-tauri/target/release/bundle/nsis/*.zip
+            src-tauri/target/release/DevPanel-windows-x64.zip

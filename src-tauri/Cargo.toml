@@ -1,0 +1,32 @@
+[package]
+name = "devpanel"
+version = "0.2.0-beta.1"
+description = "Floating dock panel for local dev environment management"
+authors = ["Jonás Duerto"]
+edition = "2021"
+
+[lib]
+name = "devpanel_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+codegen-units = 1
+panic = "abort"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.5", features = ["tray-icon"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rusqlite = { version = "0.37", features = ["bundled"] }
+tokio = { version = "1", features = ["process", "time"] }
+rcgen = { version = "0.14", features = ["x509-parser"] }
+time = "0.3"
+tauri-plugin-log = "2"
+log = "0.4"

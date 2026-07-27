@@ -1,0 +1,85 @@
+{
+  "_comment": "Reference for DevPanel's own persisted state — not a schema DevPanel provisions for user sites. Regenerate by hand when the Rust structs in src-tauri/src/{workspace/types.rs,workspace/manifest.rs,config/mod.rs} change.",
+
+  "devpanel.sqlite": {
+    "_location": "%APPDATA%/devpanel/devpanel.sqlite",
+    "_note": "Both tables are key/blob stores — one JSON document per row, not normalized columns. `payload_schema` documents the shape of that JSON.",
+
+    "workspaces": {
+      "sql": "CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, payload TEXT NOT NULL)",
+      "fields": [
+        [0, "id", "TEXT", 0, 0, 1],
+        [1, "payload", "TEXT", 0, 0, 0]
+      ],
+      "payload_schema": {
+        "_rust": "src-tauri/src/workspace/types.rs::Workspace",
+        "id": "string",
+        "name": "string",
+        "preset": "string (WorkspacePreset, e.g. \"wordpress\", \"laravel\", \"empty\")",
+        "domain": "string",
+        "db_name": "string",
+        "created_at": "integer (unix seconds)",
+        "https_ready": "bool, default false",
+        "running": "bool, default false",
+        "setup_complete": "bool, default true",
+        "runtime_profile": {
+          "_rust": "SiteRuntimeProfile",
+          "web_server": "string, \"inherit\" or e.g. \"apache\"/\"nginx\"",
+          "php_version": "string, \"inherit\" or a folder name under bin/php/",
+          "database_engine": "string, \"inherit\" or e.g. \"mysql\"/\"mariadb\"/\"sqlite\"",
+          "database_version": "string, \"inherit\" or a folder name under bin/<engine>/",
+          "redis_enabled": "bool",
+          "memcached_enabled": "bool"
+        },
+        "wordpress_admin": {
+          "_rust": "Option<WordPressAdmin>, null unless preset is wordpress",
+          "username": "string",
+          "password": "string",
+          "email": "string"
+        }
+      }
+    },
+
+    "app_state": {
+      "sql": "CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, payload TEXT NOT NULL)",
+      "fields": [
+        [0, "key", "TEXT", 0, 0, 1],
+        [1, "payload", "TEXT", 0, 0, 0]
+      ],
+      "rows": {
+        "config": {
+          "_rust": "src-tauri/src/config/mod.rs::AppConfig",
+          "php_version": "string | null (legacy — superseded by per-workspace runtime_profile)",
+          "mysql_version": "string | null",
+          "www_dir": "string, relative to the portable app root, default \"www\"",
+          "panel_hotkey": "string, default \"Ctrl+Shift+D\"",
+          "active_stack_id": "string | null",
+          "environment": "EnvironmentProfile — see src-tauri/src/environment/types.rs",
+          "tld": "string, default \".test\"",
+          "ports": {
+            "http": "u16, default 80",
+            "mysql": "u16, default 3306",
+            "postgres": "u16, default 5432",
+            "redis": "u16, default 6379"
+          },
+          "show_recovery_in_dashboard": "bool, default false"
+        }
+      },
+      "_note": "config.json next to the sqlite file is a legacy fallback read only when the 'config' row is missing; sqlite is the source of truth going forward."
+    }
+  },
+
+  "workspace.json": {
+    "_location": "<project_dir>/workspace.json — one per site, lives inside the project folder itself",
+    "_rust": "src-tauri/src/workspace/manifest.rs::WorkspaceManifest",
+    "_note": "Not in devpanel.sqlite on purpose: this travels with the project and survives an Environment switch without the workspace needing to be recreated. Consumed by the vhost renderers, see docs/vhost-templates.md.",
+    "id": "string",
+    "domain": "string",
+    "preset": "string (WorkspacePreset)",
+    "php_version": "string | null",
+    "doc_root": "string, relative to project folder — e.g. \"public\" for Laravel, \"\" for WordPress/Empty",
+    "ssl_enabled": "bool",
+    "ssl_cert_file": "string | null, absolute path to the leaf cert once finish_domain_setup has run",
+    "ssl_key_file": "string | null, absolute path to the leaf key"
+  }
+}
