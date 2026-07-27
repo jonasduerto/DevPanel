@@ -9,11 +9,11 @@ src-tauri/target/
 src-tauri/gen/
 
 # ─── OpenCode agent ────────────────────────────────────────────
-.opencode/node_modules/
-.opencode/.cache/
+.opencode/
+.claude/
 
 # ─── Editor / IDE ──────────────────────────────────────────────
-.vscode/*.local.json
+.vscode/
 .idea/
 *.swp
 *.swo
@@ -53,6 +53,9 @@ desktop.ini
 *.tmp
 
 # ─── Misc ──────────────────────────────────────────────────────
+# Local diagnostics and one-off helper scripts are not product source.
+scripts/
+
 # Local config overrides (not to be shared)
 *.local
 
