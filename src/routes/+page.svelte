@@ -11,7 +11,7 @@
   import LoadingBar from "#lib/LoadingBar.svelte";
   import StatusBar from "#lib/StatusBar.svelte";
   import { subscribeToasts, subscribeLoading, subscribeStatus } from "#lib/notifications.svelte.js";
-  import { LayoutDashboard, Globe, Settings, Wrench, Sun, Moon, X, Layers, Cpu } from "@lucide/svelte";
+  import { LayoutDashboard, Globe, Settings, Wrench, Sun, Moon, X, Cpu } from "@lucide/svelte";
   import { locale, t, loadDictionary } from "#lib/i18n/index.js";
 
   let view = $state("panel");
@@ -99,12 +99,10 @@
 <div class="panel-container" data-theme={theme}>
   <header class="titlebar" data-tauri-drag-region>
     <div class="brand">
-      <div class="logo-box">
-        <Layers class="logo-icon" size={16} />
-      </div>
+      <div class="logo-box"><img src="/branding/devpanel-mark.svg" alt="DevPanel" /></div>
       <div class="brand-text">
         <span class="title">DevPanel</span>
-        <span class="version-badge">v0.1</span>
+        <span class="version-badge">BETA</span>
       </div>
     </div>
 
