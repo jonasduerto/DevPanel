@@ -1,21 +1,27 @@
-MIT License
+DevPanel Source-Available Non-Commercial License
 
-Copyright (c) 2026 DevPanel contributors
+Copyright (c) 2026 JonasDuerto. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+DevPanel source code is published for transparency, personal learning,
+evaluation, and non-commercial internal development use. This license is
+source-available; it is not an OSI-approved open-source license.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+You may download, install, inspect, and use the unmodified software without
+charge for personal, educational, evaluation, and non-commercial internal use.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+You may not, without prior written permission from JonasDuerto:
+
+- sell, resell, rent, lease, sublicense, monetize, or commercially distribute
+  the software, source code, binaries, or any derivative work;
+- use the software or any portion of it in a commercial product, service, or
+  competing offering;
+- copy, modify, adapt, translate, create derivative works from, redistribute,
+  or publish the source code or software;
+- remove or alter copyright, ownership, branding, or license notices.
+
+Commercial use, resale, redistribution, modification, and reuse require prior
+written permission from JonasDuerto.
+
+The software is provided "AS IS", without warranty of any kind. To the maximum
+extent permitted by law, JonasDuerto is not liable for any claim, damages, or
+other liability arising from use of the software.

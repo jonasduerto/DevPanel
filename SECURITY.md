@@ -14,4 +14,4 @@ Do not open a public issue for a vulnerability that could expose local projects,
 
 ## Repository hygiene
 
-Runtime binaries, databases, sites, certificates, local environment files, logs, and build output are intentionally ignored by Git. CI receives code only; signing credentials are GitHub Actions secrets and are never committed.
+Runtime binaries, databases, sites, certificates, local environment files, logs, and build output are intentionally ignored by Git. CI receives source-available code only; signing credentials are GitHub Actions secrets and are never committed.

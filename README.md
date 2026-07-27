@@ -65,4 +65,7 @@ bin/sendmail/mailpit.exe
 
 ## License
 
-[MIT](LICENSE)
+DevPanel is published under the [DevPanel Source-Available Non-Commercial
+License](LICENSE). It may be used without charge for non-commercial purposes.
+Selling, commercial use, modification, redistribution, and reuse require prior
+written permission from JonasDuerto.
