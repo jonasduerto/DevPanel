@@ -356,7 +356,11 @@ fn save_extension_overrides(
 /// active PHP version's `php.ini`. Shared by `set_php_extension` (one
 /// extension, from the UI) and `apply_extension_overrides` (every
 /// extension in the manifest, reapplied after a version switch).
-fn write_extension_state(root: &std::path::Path, actual_file: &str, enabled: bool) -> Result<(), String> {
+fn write_extension_state(
+    root: &std::path::Path,
+    actual_file: &str,
+    enabled: bool,
+) -> Result<(), String> {
     let ini = devpanel_php_ini(root)?;
     let original = fs::read_to_string(&ini).map_err(|error| error.to_string())?;
     let backup = ini.with_extension("ini.bak");
@@ -597,7 +601,8 @@ pub async fn create_workspace(
     };
     let mut php_versions = {
         let store = state.workspace_store.lock().await;
-        store.list()
+        store
+            .list()
             .into_iter()
             .map(|workspace| workspace.runtime_profile.php_version)
             .filter(|version| version != "inherit")
@@ -606,7 +611,10 @@ pub async fn create_workspace(
     if options.runtime_profile.php_version != "inherit" {
         php_versions.push(options.runtime_profile.php_version.clone());
     }
-    state.service_mgr.refresh_services(ports, mysql_version, php_versions).await?;
+    state
+        .service_mgr
+        .refresh_services(ports, mysql_version, php_versions)
+        .await?;
 
     for service_id in workspace_service_ids(&active_stack, &options.runtime_profile.php_version) {
         state.service_mgr.start(&service_id).await.map_err(|error| {
@@ -782,13 +790,17 @@ pub async fn refresh_runtime_detection(state: tauri::State<'_, AppState>) -> Res
     };
     let php_versions = {
         let store = state.workspace_store.lock().await;
-        store.list()
+        store
+            .list()
             .into_iter()
             .map(|workspace| workspace.runtime_profile.php_version)
             .filter(|version| version != "inherit")
             .collect()
     };
-    state.service_mgr.refresh_services(ports, mysql_version, php_versions).await
+    state
+        .service_mgr
+        .refresh_services(ports, mysql_version, php_versions)
+        .await
 }
 
 fn runtime_choices(root: &std::path::Path, folder: &str, executable: &str) -> Vec<RuntimeChoice> {
@@ -839,7 +851,10 @@ pub async fn set_workspace_runtime_profile(
     }
     if profile.php_version != "inherit" {
         let available = runtime_choices(state.service_mgr.root(), "php", "php.exe");
-        if !available.iter().any(|choice| choice.value == profile.php_version) {
+        if !available
+            .iter()
+            .any(|choice| choice.value == profile.php_version)
+        {
             return Err("That PHP version is not installed in DevPanel/bin/php.".into());
         }
     }
@@ -871,10 +886,19 @@ pub async fn set_workspace_runtime_profile(
     tokio::task::spawn_blocking(move || {
         let project_dir = scaffold::project_path(&root, &www_dir, &workspace_for_manifest.id);
         let mut manifest = crate::workspace::manifest::WorkspaceManifest::load(&project_dir)?;
-        manifest.php_version = (!workspace_for_manifest.runtime_profile.php_version.eq_ignore_ascii_case("inherit"))
-            .then(|| workspace_for_manifest.runtime_profile.php_version.clone());
+        manifest.php_version = (!workspace_for_manifest
+            .runtime_profile
+            .php_version
+            .eq_ignore_ascii_case("inherit"))
+        .then(|| workspace_for_manifest.runtime_profile.php_version.clone());
         manifest.save(&project_dir)?;
-        crate::workspace::vhost::regenerate(&root, &www_dir, &workspace_for_manifest.id, &stack, http_port)
+        crate::workspace::vhost::regenerate(
+            &root,
+            &www_dir,
+            &workspace_for_manifest.id,
+            &stack,
+            http_port,
+        )
     })
     .await
     .map_err(|error| format!("Runtime profile update task panicked: {error}"))??;
@@ -1049,7 +1073,12 @@ async fn active_stack(state: &AppState) -> Result<environment::StackDefinition, 
 fn stack_database_engine(stack: &environment::StackDefinition) -> Result<String, String> {
     crate::db::migration::db_service_of(stack)
         .map(str::to_owned)
-        .ok_or_else(|| format!("The active stack '{}' does not provide a database service.", stack.name))
+        .ok_or_else(|| {
+            format!(
+                "The active stack '{}' does not provide a database service.",
+                stack.name
+            )
+        })
 }
 
 fn workspace_service_ids(stack: &environment::StackDefinition, php_version: &str) -> Vec<String> {
@@ -1131,8 +1160,8 @@ pub async fn start_workspace(
         .unwrap_or(false);
         if needs_reissue {
             log::info!("Reissuing SSL cert for '{id}' — the vhost referenced a missing file");
-            let _ = crate::commands::ssl_commands::finish_domain_setup(id.clone(), state.clone())
-                .await;
+            let _ =
+                crate::commands::ssl_commands::finish_domain_setup(id.clone(), state.clone()).await;
         }
     }
 

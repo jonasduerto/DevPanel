@@ -39,7 +39,11 @@ pub async fn enable_addon(
         };
         let addon_mgr = state.addon_mgr.lock().unwrap();
         let mut warnings = addon_mgr.validate_enable(&addon_id, &current_states);
-        warnings.extend(web_port_conflict_warnings(&addon_id, &ports, &current_states));
+        warnings.extend(web_port_conflict_warnings(
+            &addon_id,
+            &ports,
+            &current_states,
+        ));
         if !warnings.is_empty() {
             Some(warnings)
         } else {
@@ -135,10 +139,7 @@ pub async fn set_addon_dashboard_visibility(
 }
 
 #[tauri::command]
-pub async fn start_addon(
-    addon_id: String,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
+pub async fn start_addon(addon_id: String, state: State<'_, AppState>) -> Result<String, String> {
     let addon_state = {
         let config = state.config.lock().await;
         config.get().addons.get(&addon_id).cloned()
@@ -153,33 +154,32 @@ pub async fn start_addon(
                 let config = state.config.lock().await;
                 config.get().ports
             };
-            if let Some(warning) = web_port_conflict_warnings(&addon_id, &ports, &current_states).first() {
+            if let Some(warning) =
+                web_port_conflict_warnings(&addon_id, &ports, &current_states).first()
+            {
                 return Err(warning.message.clone());
             }
             let service_id = state.addon_mgr.lock().unwrap().service_id(&addon_id);
             let result = state.service_mgr.start(&service_id).await?;
             Ok(format!("{:?}", result))
         }
-        Some(_) => Err(format!("Addon '{}' is disabled. Enable it first.", addon_id)),
+        Some(_) => Err(format!(
+            "Addon '{}' is disabled. Enable it first.",
+            addon_id
+        )),
         None => Err(format!("Addon '{}' not found in config.", addon_id)),
     }
 }
 
 #[tauri::command]
-pub async fn stop_addon(
-    addon_id: String,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
+pub async fn stop_addon(addon_id: String, state: State<'_, AppState>) -> Result<String, String> {
     let service_id = state.addon_mgr.lock().unwrap().service_id(&addon_id);
     let result = state.service_mgr.stop(&service_id).await?;
     Ok(format!("{:?}", result))
 }
 
 #[tauri::command]
-pub async fn restart_addon(
-    addon_id: String,
-    state: State<'_, AppState>,
-) -> Result<String, String> {
+pub async fn restart_addon(addon_id: String, state: State<'_, AppState>) -> Result<String, String> {
     let (current_states, ports) = {
         let config = state.config.lock().await;
         (config.get().addons.clone(), config.get().ports)

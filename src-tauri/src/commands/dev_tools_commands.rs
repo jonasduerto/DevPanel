@@ -52,9 +52,16 @@ fn run_wp_cli_blocking(
     if output.status.success() {
         // Keep machine-readable commands (for example `--format=json`) clean;
         // WP-CLI warnings commonly go to stderr even when the command succeeds.
-        Ok(if stdout.trim().is_empty() { stderr } else { stdout })
+        Ok(if stdout.trim().is_empty() {
+            stderr
+        } else {
+            stdout
+        })
     } else {
-        Err(format!("WP-CLI exited with {}: {}{}", output.status, stdout, stderr))
+        Err(format!(
+            "WP-CLI exited with {}: {}{}",
+            output.status, stdout, stderr
+        ))
     }
 }
 
@@ -71,10 +78,10 @@ fn run_wp_command(
     args: &[String],
 ) -> Result<WpCommandResult, String> {
     run_wp_cli_blocking(root, www_dir, workspace, args).map(|output| WpCommandResult {
-            success: true,
-            output,
-            error: None,
-        })
+        success: true,
+        output,
+        error: None,
+    })
 }
 
 #[derive(Serialize, Deserialize)]
@@ -399,14 +406,18 @@ pub async fn wp_plugin_list(
             &root,
             &www_dir,
             &workspace,
-            &["plugin".to_string(), "list".to_string(), "--format=json".to_string()],
+            &[
+                "plugin".to_string(),
+                "list".to_string(),
+                "--format=json".to_string(),
+            ],
         );
 
         match result {
             Ok(output) => {
                 // Parse JSON output
-                let plugins: Vec<WpPlugin> = serde_json::from_str(&output)
-                    .unwrap_or_else(|_| Vec::new());
+                let plugins: Vec<WpPlugin> =
+                    serde_json::from_str(&output).unwrap_or_else(|_| Vec::new());
                 WpPluginsResult {
                     success: true,
                     plugins,
@@ -555,13 +566,17 @@ pub async fn wp_theme_list(
             &root,
             &www_dir,
             &workspace,
-            &["theme".to_string(), "list".to_string(), "--format=json".to_string()],
+            &[
+                "theme".to_string(),
+                "list".to_string(),
+                "--format=json".to_string(),
+            ],
         );
 
         match result {
             Ok(output) => {
-                let themes: Vec<WpTheme> = serde_json::from_str(&output)
-                    .unwrap_or_else(|_| Vec::new());
+                let themes: Vec<WpTheme> =
+                    serde_json::from_str(&output).unwrap_or_else(|_| Vec::new());
                 WpThemesResult {
                     success: true,
                     themes,
@@ -694,13 +709,21 @@ pub async fn wp_update_all(
             &root,
             &www_dir,
             &workspace,
-            &["plugin".to_string(), "update".to_string(), "--all".to_string()],
+            &[
+                "plugin".to_string(),
+                "update".to_string(),
+                "--all".to_string(),
+            ],
         );
         let theme_update = run_wp_command(
             &root,
             &www_dir,
             &workspace,
-            &["theme".to_string(), "update".to_string(), "--all".to_string()],
+            &[
+                "theme".to_string(),
+                "update".to_string(),
+                "--all".to_string(),
+            ],
         );
         let core_update = run_wp_command(
             &root,
@@ -783,7 +806,11 @@ pub async fn wp_transient_cleanup(
             &root,
             &www_dir,
             &workspace,
-            &["transient".to_string(), "delete".to_string(), "--expired".to_string()],
+            &[
+                "transient".to_string(),
+                "delete".to_string(),
+                "--expired".to_string(),
+            ],
         )
     })
     .await
@@ -891,13 +918,21 @@ pub async fn wp_security_audit(
             &root,
             &www_dir,
             &workspace,
-            &["config".to_string(), "get".to_string(), "WP_DEBUG".to_string()],
+            &[
+                "config".to_string(),
+                "get".to_string(),
+                "WP_DEBUG".to_string(),
+            ],
         );
         if let Ok(result) = debug_check {
             let is_debug = result.output.trim().to_lowercase() == "true";
             checks.push(SecurityCheck {
                 name: "WP_DEBUG setting".to_string(),
-                status: if is_debug { "warn".to_string() } else { "pass".to_string() },
+                status: if is_debug {
+                    "warn".to_string()
+                } else {
+                    "pass".to_string()
+                },
                 description: if is_debug {
                     "Debug mode is ENABLED".to_string()
                 } else {
@@ -916,14 +951,22 @@ pub async fn wp_security_audit(
             &root,
             &www_dir,
             &workspace,
-            &["config".to_string(), "get".to_string(), "table_prefix".to_string()],
+            &[
+                "config".to_string(),
+                "get".to_string(),
+                "table_prefix".to_string(),
+            ],
         );
         if let Ok(result) = prefix_check {
             let prefix = result.output.trim();
             let is_default = prefix == "wp_";
             checks.push(SecurityCheck {
                 name: "Database table prefix".to_string(),
-                status: if is_default { "warn".to_string() } else { "pass".to_string() },
+                status: if is_default {
+                    "warn".to_string()
+                } else {
+                    "pass".to_string()
+                },
                 description: format!("Table prefix: {}", prefix),
                 recommendation: if is_default {
                     "Consider using a custom table prefix (not wp_) for security".to_string()
@@ -938,13 +981,21 @@ pub async fn wp_security_audit(
             &root,
             &www_dir,
             &workspace,
-            &["config".to_string(), "get".to_string(), "DISALLOW_FILE_EDIT".to_string()],
+            &[
+                "config".to_string(),
+                "get".to_string(),
+                "DISALLOW_FILE_EDIT".to_string(),
+            ],
         );
         if let Ok(result) = disallow_check {
             let is_disabled = result.output.trim().to_lowercase() == "true";
             checks.push(SecurityCheck {
                 name: "File editor disabled".to_string(),
-                status: if is_disabled { "pass".to_string() } else { "warn".to_string() },
+                status: if is_disabled {
+                    "pass".to_string()
+                } else {
+                    "warn".to_string()
+                },
                 description: if is_disabled {
                     "File editor is DISABLED".to_string()
                 } else {
@@ -953,7 +1004,8 @@ pub async fn wp_security_audit(
                 recommendation: if is_disabled {
                     "Good! File editing is disabled".to_string()
                 } else {
-                    "Set DISALLOW_FILE_EDIT to true to prevent editing PHP files from admin".to_string()
+                    "Set DISALLOW_FILE_EDIT to true to prevent editing PHP files from admin"
+                        .to_string()
                 },
             });
         }
@@ -963,11 +1015,19 @@ pub async fn wp_security_audit(
             &root,
             &www_dir,
             &workspace,
-            &["option".to_string(), "get".to_string(), "blogdescription".to_string()],
+            &[
+                "option".to_string(),
+                "get".to_string(),
+                "blogdescription".to_string(),
+            ],
         );
         checks.push(SecurityCheck {
             name: "WordPress installation".to_string(),
-            status: if generator_check.is_ok() { "pass".to_string() } else { "fail".to_string() },
+            status: if generator_check.is_ok() {
+                "pass".to_string()
+            } else {
+                "fail".to_string()
+            },
             description: if generator_check.is_ok() {
                 "WordPress is properly installed".to_string()
             } else {
@@ -1071,7 +1131,8 @@ pub async fn wp_security_harden(
         WpCommandResult {
             success: failures.is_empty(),
             output,
-            error: (!failures.is_empty()).then(|| format!("Could not apply: {}", failures.join(", "))),
+            error: (!failures.is_empty())
+                .then(|| format!("Could not apply: {}", failures.join(", "))),
         }
     })
     .await
@@ -1133,13 +1194,17 @@ pub async fn wp_site_health(
             &["core".to_string(), "version".to_string()],
         );
         if let Ok(r) = version_result {
-            health.good.push(format!("WordPress version: {}", r.output.trim()));
+            health
+                .good
+                .push(format!("WordPress version: {}", r.output.trim()));
         }
 
         // Check 2: PHP version
         let php_version = scaffold::find_tool(&root, "php", "php.exe");
         if let Some(php) = php_version {
-            health.good.push(format!("PHP version detected at: {}", php.display()));
+            health
+                .good
+                .push(format!("PHP version detected at: {}", php.display()));
         }
 
         // Check 3: Database connection
@@ -1154,10 +1219,14 @@ pub async fn wp_site_health(
                 if r.output.contains("OK") {
                     health.good.push("Database tables OK".to_string());
                 } else {
-                    health.critical.push("Database tables need repair".to_string());
+                    health
+                        .critical
+                        .push("Database tables need repair".to_string());
                 }
             }
-            Err(_) => health.critical.push("Cannot connect to database".to_string()),
+            Err(_) => health
+                .critical
+                .push("Cannot connect to database".to_string()),
         }
 
         // Check 4: Object cache
@@ -1165,11 +1234,17 @@ pub async fn wp_site_health(
             &root,
             &www_dir,
             &workspace,
-            &["cache".to_string(), "get".to_string(), "__wp_cli_test".to_string()],
+            &[
+                "cache".to_string(),
+                "get".to_string(),
+                "__wp_cli_test".to_string(),
+            ],
         );
         match cache_check {
             Ok(_) => health.good.push("Object cache working".to_string()),
-            Err(_) => health.recommended.push("Object cache not persistent (expected for file-based cache)".to_string()),
+            Err(_) => health
+                .recommended
+                .push("Object cache not persistent (expected for file-based cache)".to_string()),
         }
 
         // Check 5: Cron status
@@ -1185,7 +1260,8 @@ pub async fn wp_site_health(
         }
 
         // Calculate score
-        health.score = 100 - (health.critical.len() as i32 * 20) - (health.recommended.len() as i32 * 5);
+        health.score =
+            100 - (health.critical.len() as i32 * 20) - (health.recommended.len() as i32 * 5);
         health.status = if health.critical.is_empty() && health.recommended.is_empty() {
             "good".to_string()
         } else if health.critical.is_empty() {
@@ -1489,33 +1565,89 @@ pub async fn wp_workspace_info(
     };
 
     tokio::task::spawn_blocking(move || {
-        let version = run_wp_command(&root, &www_dir, &workspace, &["core".to_string(), "version".to_string()])
-            .map(|r| r.output.trim().to_string())
-            .unwrap_or_else(|_| "Unknown".to_string());
+        let version = run_wp_command(
+            &root,
+            &www_dir,
+            &workspace,
+            &["core".to_string(), "version".to_string()],
+        )
+        .map(|r| r.output.trim().to_string())
+        .unwrap_or_else(|_| "Unknown".to_string());
 
-        let site_url = run_wp_command(&root, &www_dir, &workspace, &["option".to_string(), "get".to_string(), "siteurl".to_string()])
-            .map(|r| r.output.trim().to_string())
-            .unwrap_or_else(|_| "Unknown".to_string());
+        let site_url = run_wp_command(
+            &root,
+            &www_dir,
+            &workspace,
+            &[
+                "option".to_string(),
+                "get".to_string(),
+                "siteurl".to_string(),
+            ],
+        )
+        .map(|r| r.output.trim().to_string())
+        .unwrap_or_else(|_| "Unknown".to_string());
 
-        let title = run_wp_command(&root, &www_dir, &workspace, &["option".to_string(), "get".to_string(), "blogname".to_string()])
-            .map(|r| r.output.trim().to_string())
-            .unwrap_or_else(|_| "Unknown".to_string());
+        let title = run_wp_command(
+            &root,
+            &www_dir,
+            &workspace,
+            &[
+                "option".to_string(),
+                "get".to_string(),
+                "blogname".to_string(),
+            ],
+        )
+        .map(|r| r.output.trim().to_string())
+        .unwrap_or_else(|_| "Unknown".to_string());
 
-        let db_size = run_wp_command(&root, &www_dir, &workspace, &["db".to_string(), "size".to_string()])
-            .map(|r| r.output.trim().to_string())
-            .unwrap_or_else(|_| "Unknown".to_string());
+        let db_size = run_wp_command(
+            &root,
+            &www_dir,
+            &workspace,
+            &["db".to_string(), "size".to_string()],
+        )
+        .map(|r| r.output.trim().to_string())
+        .unwrap_or_else(|_| "Unknown".to_string());
 
-        let plugins = run_wp_command(&root, &www_dir, &workspace, &["plugin".to_string(), "list".to_string(), "--status=active".to_string(), "--format=count".to_string()])
-            .map(|r| r.output.trim().parse().unwrap_or(0))
-            .unwrap_or(0);
+        let plugins = run_wp_command(
+            &root,
+            &www_dir,
+            &workspace,
+            &[
+                "plugin".to_string(),
+                "list".to_string(),
+                "--status=active".to_string(),
+                "--format=count".to_string(),
+            ],
+        )
+        .map(|r| r.output.trim().parse().unwrap_or(0))
+        .unwrap_or(0);
 
-        let plugins_total = run_wp_command(&root, &www_dir, &workspace, &["plugin".to_string(), "list".to_string(), "--format=count".to_string()])
-            .map(|r| r.output.trim().parse().unwrap_or(0))
-            .unwrap_or(0);
+        let plugins_total = run_wp_command(
+            &root,
+            &www_dir,
+            &workspace,
+            &[
+                "plugin".to_string(),
+                "list".to_string(),
+                "--format=count".to_string(),
+            ],
+        )
+        .map(|r| r.output.trim().parse().unwrap_or(0))
+        .unwrap_or(0);
 
-        let themes_total = run_wp_command(&root, &www_dir, &workspace, &["theme".to_string(), "list".to_string(), "--format=count".to_string()])
-            .map(|r| r.output.trim().parse().unwrap_or(0))
-            .unwrap_or(0);
+        let themes_total = run_wp_command(
+            &root,
+            &www_dir,
+            &workspace,
+            &[
+                "theme".to_string(),
+                "list".to_string(),
+                "--format=count".to_string(),
+            ],
+        )
+        .map(|r| r.output.trim().parse().unwrap_or(0))
+        .unwrap_or(0);
 
         Ok(WpWorkspaceInfo {
             version,

@@ -17,7 +17,11 @@ fn ssl_block(root: &Path, manifest: &WorkspaceManifest, is_public: bool) -> Stri
     if !is_public {
         return String::new();
     }
-    match (manifest.ssl_enabled, &manifest.ssl_cert_file, &manifest.ssl_key_file) {
+    match (
+        manifest.ssl_enabled,
+        &manifest.ssl_cert_file,
+        &manifest.ssl_key_file,
+    ) {
         (true, Some(cert_file), Some(key_file)) => {
             let template = templates::load(root, "nginx-ssl-block.conf.tpl", DEFAULT_SSL_BLOCK);
             templates::render(

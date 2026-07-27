@@ -1802,6 +1802,15 @@ p {
     gap: 8px;
   }
 
+  .settings-select {
+    width: 100%;
+    padding: 8px 10px;
+    color: var(--text-main);
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+  }
+
   .theme-mode-btn {
     display: flex;
     flex-direction: column;

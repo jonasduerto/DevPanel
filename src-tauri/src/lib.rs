@@ -14,8 +14,8 @@ use commands::addon_commands::{
 };
 use commands::config_commands::{
     check_port_availability, enable_long_paths, get_config, get_long_paths_enabled, set_ports,
+    set_preferred_editor, set_show_recovery_in_dashboard, set_tld, set_update_checks_enabled,
     suggest_available_web_port,
-    set_preferred_editor, set_show_recovery_in_dashboard, set_tld,
 };
 use commands::database_tools_commands::{
     create_database_user, database_backup_all, database_repair_all, database_restore_backup,
@@ -24,11 +24,10 @@ use commands::database_tools_commands::{
 };
 use commands::dev_tools_commands::{
     get_workspace_debug_context, get_wp_tool_status, get_wp_version, repair_workspace, run_wp_cli,
-    wp_plugin_list, wp_plugin_activate, wp_plugin_deactivate, wp_plugin_delete,
-    wp_theme_list, wp_theme_activate, wp_core_update, wp_core_reinstall, wp_update_all,
-    wp_cache_flush, wp_transient_cleanup, wp_search_replace,
-    wp_security_audit, wp_security_harden,
-    wp_site_health, wp_performance_analysis, wp_db_size, wp_workspace_info,
+    wp_cache_flush, wp_core_reinstall, wp_core_update, wp_db_size, wp_performance_analysis,
+    wp_plugin_activate, wp_plugin_deactivate, wp_plugin_delete, wp_plugin_list, wp_search_replace,
+    wp_security_audit, wp_security_harden, wp_site_health, wp_theme_activate, wp_theme_list,
+    wp_transient_cleanup, wp_update_all, wp_workspace_info,
 };
 use commands::service_commands::{
     get_service_statuses, get_services, restart_service, start_service, stop_service,
@@ -37,10 +36,13 @@ use commands::service_control_commands::{
     get_service_config_paths, get_service_log_paths, graceful_restart_service, read_service_log,
     reload_service, test_service_config,
 };
-use commands::ssl_commands::{finish_domain_setup, get_ca_trusted, sync_workspace_hosts, trust_local_ca};
+use commands::ssl_commands::{
+    finish_domain_setup, get_ca_trusted, sync_workspace_hosts, trust_local_ca,
+};
 use commands::stack_commands::{
     get_active_stack, get_stacks, set_active_stack, start_stack, stop_stack,
 };
+use commands::update_commands::check_for_update;
 use commands::workspace_commands::{
     create_workspace, delete_workspace_all, delete_workspace_config, delete_workspace_data,
     get_php_extensions, get_runtime_catalog, get_site_presets, get_workspace_paths, install_xdebug,
@@ -118,7 +120,9 @@ pub fn run() {
                 .level(tauri_plugin_log::log::LevelFilter::Debug)
                 .targets([
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: None }),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: None,
+                    }),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
                 ])
                 .build(),
@@ -127,8 +131,11 @@ pub fn run() {
         .setup(|app| {
             let config = ConfigManager::new();
             let service_mgr = ServiceManager::new();
-            let detected = service_mgr
-                .detect_services(&config.get().ports, config.get().mysql_version.as_deref(), &[]);
+            let detected = service_mgr.detect_services(
+                &config.get().ports,
+                config.get().mysql_version.as_deref(),
+                &[],
+            );
             service_mgr.set_definitions(detected);
             app.manage(AppState::new(service_mgr, config));
 
@@ -159,7 +166,11 @@ pub fn run() {
                     };
                     if let Ok(stack) = stack {
                         for warning in environment::transition::on_stack_changed(
-                            &stack, &workspaces, &root, &www_dir, http_port,
+                            &stack,
+                            &workspaces,
+                            &root,
+                            &www_dir,
+                            http_port,
                         ) {
                             log::warn!("vhost resync at startup: {warning}");
                         }
@@ -170,13 +181,8 @@ pub fn run() {
             let show_item = MenuItem::with_id(app, "show", "Show Panel", true, None::<&str>)?;
             let stop_all_item =
                 MenuItem::with_id(app, "stop_all", "Stop Services", true, None::<&str>)?;
-            let close_all_item = MenuItem::with_id(
-                app,
-                "close_all",
-                "Close All Sites",
-                true,
-                None::<&str>,
-            )?;
+            let close_all_item =
+                MenuItem::with_id(app, "close_all", "Close All Sites", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let tray_menu = Menu::with_items(
@@ -290,6 +296,8 @@ pub fn run() {
             set_ports,
             set_show_recovery_in_dashboard,
             set_preferred_editor,
+            set_update_checks_enabled,
+            check_for_update,
             get_long_paths_enabled,
             enable_long_paths,
             get_database_tool_status,

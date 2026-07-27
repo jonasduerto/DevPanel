@@ -3,11 +3,13 @@
   import { invoke } from "@tauri-apps/api/core";
   import { openPath, openUrl } from "@tauri-apps/plugin-opener";
   import { onMount } from "svelte";
+  import ConfirmDialog from "#lib/ConfirmDialog.svelte";
   import {
     Server, Database, Code2, Zap, Wrench, Mail,
     RefreshCw, TriangleAlert, Settings2, FileText,
     ExternalLink, Check, AlertCircle, Folder, ShieldCheck,
-    SlidersHorizontal, PackageCheck, PackagePlus, Puzzle
+    SlidersHorizontal, PackageCheck, PackagePlus, Puzzle,
+    KeyRound, UserPlus, Play, Square
   } from "@lucide/svelte";
 
   const categoryMeta = {
@@ -46,6 +48,25 @@
   let loadingExtensions = $state(false);
   let installingXdebug = $state(false);
 
+  // Live process control (start/stop/restart) per module
+  /** @type {Record<string, boolean>} */
+  let actionBusy = $state({});
+  let mailpitUrl = $state("http://127.0.0.1:8025");
+
+  // MySQL-specific tools (root password, create DB+user, backups, version)
+  let mysqlStatus = $state(null);
+  let mysqlCurrentPassword = $state("");
+  let mysqlNewPassword = $state("");
+  let mysqlDbName = $state("");
+  let mysqlDbUser = $state("");
+  let mysqlDbPassword = $state("");
+  /** @type {string[]} */
+  let mysqlBackups = $state([]);
+  let mysqlState = $state({ busy: false });
+  let mysqlOutput = $state("");
+  /** @type {string | null} */
+  let mysqlPending = $state(null);
+
   onMount(async () => {
     await loadData();
   });
@@ -54,18 +75,89 @@
     loading = true;
     error = "";
     try {
-      const [addons, cfg] = await Promise.all([
+      const [addons, cfg, dbStatus, backups] = await Promise.all([
         invoke("list_addons"),
         invoke("get_config"),
+        invoke("get_database_tool_status").catch(() => null),
+        invoke("list_database_backups").catch(() => []),
       ]);
       modulesList = addons;
       if (cfg && cfg.ports) {
         appPorts = { ...cfg.ports };
       }
+      mailpitUrl = cfg?.mailpit_url || "http://127.0.0.1:8025";
+      mysqlStatus = dbStatus;
+      mysqlBackups = backups;
     } catch (e) {
       error = String(e);
     }
     loading = false;
+  }
+
+  async function controlAddon(/** @type {any} */ addon, /** @type {"start" | "stop" | "restart"} */ action) {
+    const id = addon.definition.id;
+    actionBusy[id] = true;
+    error = "";
+    try {
+      await invoke(`${action}_addon`, { addonId: id });
+      await loadData();
+    } catch (e) {
+      error = String(e);
+    }
+    actionBusy[id] = false;
+  }
+
+  async function runMysqlTool(/** @type {string} */ action) {
+    mysqlOutput = "";
+    error = "";
+    mysqlState.busy = true;
+    try {
+      let msg = "Operation completed";
+      if (action === "root") {
+        await invoke("update_mysql_root_password", { currentPassword: mysqlCurrentPassword, newPassword: mysqlNewPassword });
+        mysqlCurrentPassword = "";
+        mysqlNewPassword = "";
+        msg = "MySQL root password updated";
+      } else if (action === "user") {
+        if (!mysqlDbName || !mysqlDbUser || !mysqlDbPassword) throw new Error("Fill in all 3 fields.");
+        await invoke("create_database_and_user", { dbName: mysqlDbName, username: mysqlDbUser, password: mysqlDbPassword });
+        mysqlDbName = "";
+        mysqlDbUser = "";
+        mysqlDbPassword = "";
+        msg = "Database and user created";
+      } else if (action === "backup") {
+        const path = await invoke("backup_all_databases");
+        msg = `Backed up at ${path}`;
+      } else if (action === "repair") {
+        const res = await invoke("repair_mysql_tables");
+        msg = res.stdout || res.stderr || "Repair completed";
+      } else if (action.startsWith("restore:")) {
+        const backupName = action.slice(8);
+        const res = await invoke("restore_database_backup", { backupName });
+        msg = res.stdout || res.stderr || "Restore completed";
+      }
+      mysqlOutput = msg;
+      successMsg = msg;
+      setTimeout(() => (successMsg = ""), 4000);
+      await loadData();
+    } catch (e) {
+      error = String(e);
+    }
+    mysqlState.busy = false;
+  }
+
+  async function changeMysqlVersion(/** @type {string} */ version) {
+    error = "";
+    mysqlState.busy = true;
+    try {
+      await invoke("set_mysql_version", { version: version || null });
+      successMsg = "MySQL version updated";
+      setTimeout(() => (successMsg = ""), 4000);
+      await loadData();
+    } catch (e) {
+      error = String(e);
+    }
+    mysqlState.busy = false;
   }
 
   // Filter 1: Installed Modules (grouped by category)
@@ -268,6 +360,19 @@
     }
   }
 
+  async function gracefulRestart(/** @type {string} */ moduleId) {
+    error = "";
+    successMsg = "";
+    try {
+      const res = await invoke("graceful_restart_service", { id: moduleId });
+      successMsg = res.stdout || res.stderr || `${moduleId} restarted gracefully`;
+      setTimeout(() => { successMsg = ""; }, 5000);
+      await loadData();
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
   function getModulePortKey(id) {
     if (id === "apache" || id === "nginx") return id;
     if (id === "mysql") return "mysql";
@@ -404,6 +509,7 @@
                       <span class="pill-badge success">Installed</span>
                       {#if addon.state.enabled}
                         <span class="pill-badge accent">Activated</span>
+                        <span class="pill-badge" class:success={addon.running}>{addon.running ? "Running" : "Stopped"}</span>
                       {:else}
                         <span class="pill-badge">Disabled</span>
                       {/if}
@@ -421,6 +527,23 @@
                     />
                     <span class="toggle-label">Enable Module</span>
                   </label>
+
+                  {#if addon.state.enabled}
+                    <div class="buttons-row">
+                      <button class="btn-secondary btn-xs" onclick={() => controlAddon(addon, "start")} disabled={actionBusy[addon.definition.id] || addon.running}>
+                        <Play size={12} />
+                        <span>Start</span>
+                      </button>
+                      <button class="btn-secondary btn-xs" onclick={() => controlAddon(addon, "restart")} disabled={actionBusy[addon.definition.id]}>
+                        <RefreshCw size={12} />
+                        <span>Restart</span>
+                      </button>
+                      <button class="btn-secondary btn-xs" onclick={() => controlAddon(addon, "stop")} disabled={actionBusy[addon.definition.id] || !addon.running}>
+                        <Square size={12} />
+                        <span>Stop</span>
+                      </button>
+                    </div>
+                  {/if}
 
                   {#if addon.definition.dashboard_capable && addon.state.enabled}
                     <label class="toggle-switch">
@@ -582,17 +705,109 @@
                               <ShieldCheck size={12} />
                               <span>Test Config Syntax</span>
                             </button>
-                            {#if addon.definition.id === "mailpit"}
+                            {#if ["apache", "nginx"].includes(addon.definition.id)}
                               <button
                                 class="btn-secondary btn-xs"
-                                onclick={() => openUrl("http://127.0.0.1:8025")}
+                                onclick={() => gracefulRestart(addon.definition.id)}
                               >
-                                <ExternalLink size={12} />
-                                <span>Open Web GUI</span>
+                                <RefreshCw size={12} />
+                                <span>Graceful Restart</span>
                               </button>
                             {/if}
                           </div>
                         </div>
+                      {/if}
+
+                      {#if addon.definition.id === "mailpit"}
+                        <div class="setting-item">
+                          <span class="setting-label">Web Interface</span>
+                          <div class="buttons-row">
+                            <button
+                              class="btn-secondary btn-xs"
+                              onclick={() => openUrl(mailpitUrl)}
+                            >
+                              <ExternalLink size={12} />
+                              <span>Open Web GUI</span>
+                            </button>
+                          </div>
+                        </div>
+                      {/if}
+
+                      <!-- MySQL-specific management tools -->
+                      {#if addon.definition.id === "mysql"}
+                        <div class="setting-item full-width">
+                          <span class="setting-label">MySQL Version</span>
+                          <div class="buttons-row">
+                            <select
+                              value={mysqlStatus?.selected_version ?? ""}
+                              onchange={(event) => changeMysqlVersion(event.currentTarget.value)}
+                              disabled={mysqlState.busy || mysqlStatus?.mysql_running}
+                            >
+                              <option value="">Most recent detected</option>
+                              {#each mysqlStatus?.mysql_versions ?? [] as version (version)}
+                                <option value={version}>{version}</option>
+                              {/each}
+                            </select>
+                          </div>
+                          {#if mysqlStatus?.mysql_running}
+                            <span class="setting-hint">Stop MySQL before switching versions.</span>
+                          {/if}
+                        </div>
+
+                        <div class="setting-item full-width">
+                          <span class="setting-label">Root Password</span>
+                          <div class="buttons-row">
+                            <input type="password" class="port-input" style="width: 140px" bind:value={mysqlCurrentPassword} autocomplete="current-password" placeholder="Current password" />
+                            <input type="password" class="port-input" style="width: 140px" bind:value={mysqlNewPassword} autocomplete="new-password" placeholder="New password" />
+                            <button class="btn-secondary btn-xs" onclick={() => (mysqlPending = "root")} disabled={mysqlState.busy}>
+                              <KeyRound size={12} />
+                              <span>Update</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div class="setting-item full-width">
+                          <span class="setting-label">Create Database + User</span>
+                          <div class="buttons-row">
+                            <input class="port-input" style="width: 120px" bind:value={mysqlDbName} placeholder="DB Name" />
+                            <input class="port-input" style="width: 120px" bind:value={mysqlDbUser} placeholder="User" />
+                            <input type="password" class="port-input" style="width: 120px" bind:value={mysqlDbPassword} autocomplete="new-password" placeholder="Password" />
+                            <button class="btn-secondary btn-xs" onclick={() => runMysqlTool("user")} disabled={mysqlState.busy}>
+                              <UserPlus size={12} />
+                              <span>Create</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        <div class="setting-item full-width">
+                          <span class="setting-label">Backups & Repair</span>
+                          <div class="buttons-row">
+                            <button class="btn-secondary btn-xs" onclick={() => runMysqlTool("backup")} disabled={mysqlState.busy}>
+                              <PackagePlus size={12} />
+                              <span>Backup all</span>
+                            </button>
+                            <button class="btn-secondary btn-xs" onclick={() => (mysqlPending = "repair")} disabled={mysqlState.busy}>
+                              <Wrench size={12} />
+                              <span>Repair tables</span>
+                            </button>
+                          </div>
+                          {#if mysqlBackups.length}
+                            <div class="buttons-row" style="flex-wrap: wrap; margin-top: 6px;">
+                              {#each mysqlBackups as backup (backup)}
+                                <button class="btn-secondary btn-xs" onclick={() => (mysqlPending = `restore:${backup}`)} disabled={mysqlState.busy}>
+                                  Restore {backup}
+                                </button>
+                              {/each}
+                            </div>
+                          {:else}
+                            <span class="setting-hint">No backups generated yet.</span>
+                          {/if}
+                        </div>
+                        {#if mysqlOutput}
+                          <div class="setting-item full-width">
+                            <span class="no-files-hint">{mysqlOutput}</span>
+                          </div>
+                        {/if}
                       {/if}
                     </div>
                   </div>
@@ -639,4 +854,13 @@
     {/if}
   {/if}
 </div>
+
+{#if mysqlPending}
+  <ConfirmDialog
+    message={mysqlPending === "root" ? "Change MySQL root password?" : mysqlPending === "repair" ? "Repair all MySQL tables?" : "Restore backup " + mysqlPending.slice(8) + "?"}
+    confirmLabel={mysqlPending.startsWith("restore:") ? "Restore" : mysqlPending === "repair" ? "Repair" : "Update"}
+    onCancel={() => (mysqlPending = null)}
+    onConfirm={() => { const a = mysqlPending; mysqlPending = null; runMysqlTool(a); }}
+  />
+{/if}
 

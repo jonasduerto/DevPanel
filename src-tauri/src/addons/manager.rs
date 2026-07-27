@@ -78,7 +78,8 @@ impl AddonManager {
             if let Some(state) = current_states.get(conflict_id) {
                 if state.enabled {
                     let conflict_def = self.definitions.iter().find(|d| d.id == *conflict_id);
-                    let conflict_name = conflict_def.map(|d| d.name.as_str()).unwrap_or(conflict_id);
+                    let conflict_name =
+                        conflict_def.map(|d| d.name.as_str()).unwrap_or(conflict_id);
                     warnings.push(AddonActionWarning {
                         message: format!(
                             "{} is already enabled and conflicts with {}. Disable {} first.",
@@ -139,14 +140,18 @@ impl AddonManager {
             "apache" => service_mgr.find_binary("apache", "httpd.exe").is_some(),
             "nginx" => service_mgr.find_binary("nginx", "nginx.exe").is_some(),
             "mysql" => service_mgr.find_binary("mysql", "mysqld.exe").is_some(),
-            "postgres" => service_mgr.find_binary("postgres", "postgres.exe").is_some(),
+            "postgres" => service_mgr
+                .find_binary("postgres", "postgres.exe")
+                .is_some(),
             "php" => {
                 service_mgr.find_binary("php", "php-cgi.exe").is_some()
                     || service_mgr.find_binary("php", "php.exe").is_some()
             }
             "node" => service_mgr.find_binary("node", "node.exe").is_some(),
             "python" => service_mgr.find_binary("python", "python.exe").is_some(),
-            "redis" => service_mgr.find_binary("redis", "redis-server.exe").is_some(),
+            "redis" => service_mgr
+                .find_binary("redis", "redis-server.exe")
+                .is_some(),
             "mailpit" => service_mgr.find_binary("sendmail", "mailpit.exe").is_some(),
             _ => false,
         }

@@ -6,4 +6,5 @@ pub mod service_commands;
 pub mod service_control_commands;
 pub mod ssl_commands;
 pub mod stack_commands;
+pub mod update_commands;
 pub mod workspace_commands;

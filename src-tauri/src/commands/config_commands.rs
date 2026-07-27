@@ -35,6 +35,15 @@ pub async fn set_preferred_editor(
     config.set_preferred_editor(editor)
 }
 
+#[tauri::command]
+pub async fn set_update_checks_enabled(
+    enabled: bool,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let mut config = state.config.lock().await;
+    config.set_update_checks_enabled(enabled)
+}
+
 /// Whether Windows' NTFS long-path support is on. Read-only, no elevation.
 #[tauri::command]
 pub async fn get_long_paths_enabled() -> Result<bool, String> {
@@ -232,9 +241,15 @@ pub async fn set_ports(
     ports: PortConfig,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<String>, String> {
-    if [ports.apache, ports.nginx, ports.mysql, ports.postgres, ports.redis]
-        .into_iter()
-        .any(|port| port == 0)
+    if [
+        ports.apache,
+        ports.nginx,
+        ports.mysql,
+        ports.postgres,
+        ports.redis,
+    ]
+    .into_iter()
+    .any(|port| port == 0)
     {
         return Err("Ports must be between 1 and 65535.".into());
     }

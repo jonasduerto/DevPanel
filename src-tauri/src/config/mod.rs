@@ -13,6 +13,10 @@ fn default_preferred_editor() -> String {
     "vscode".into()
 }
 
+fn default_update_checks_enabled() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub mysql_version: Option<String>,
@@ -28,6 +32,9 @@ pub struct AppConfig {
     /// Editor opened by the primary IDE shortcut on every site card.
     #[serde(default = "default_preferred_editor")]
     pub preferred_editor: String,
+    /// Checks GitHub Releases once when the application opens.
+    #[serde(default = "default_update_checks_enabled")]
+    pub update_checks_enabled: bool,
     #[serde(default)]
     pub ports: PortConfig,
     #[serde(default)]
@@ -47,6 +54,7 @@ impl Default for AppConfig {
             active_stack_id: Some("apache-mariadb-php".into()),
             tld: default_tld(),
             preferred_editor: default_preferred_editor(),
+            update_checks_enabled: default_update_checks_enabled(),
             ports: PortConfig::default(),
             show_recovery_in_dashboard: false,
             addons: BTreeMap::new(),
@@ -196,6 +204,11 @@ impl ConfigManager {
 
     pub fn set_preferred_editor(&mut self, editor: String) -> Result<(), String> {
         self.config.preferred_editor = editor;
+        self.save()
+    }
+
+    pub fn set_update_checks_enabled(&mut self, enabled: bool) -> Result<(), String> {
+        self.config.update_checks_enabled = enabled;
         self.save()
     }
 

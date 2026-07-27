@@ -87,7 +87,7 @@
     return /** @type {SitePaths} */ (paths);
   }
 
-  /** @param {"site" | "admin" | "folder" | "php" | "mysql" | "composer" | "redis" | "memcached" | "sendmail" | "heidisql" | "cmder" | "vscode" | "cursor" | "sublime" | "claude" | "codex"} action */
+  /** @param {string} action */
   async function runTool(action) {
     error = "";
     try {

@@ -6,15 +6,16 @@
   import Loader from "#lib/Loader.svelte";
   import CardHeader from "#lib/CardHeader.svelte";
   import DetailsOutput from "#lib/DetailsOutput.svelte";
-  import { Globe, Shield, FolderKey, Sun, Moon, Laptop, Check, RefreshCw, Code2 } from "@lucide/svelte";
+  import { Globe, Shield, FolderKey, Sun, Moon, Laptop, Check, RefreshCw, Code2, Download } from "@lucide/svelte";
 
-  let { theme, toggleTheme } = $props();
+  let { theme, toggleTheme, onUpdatePreferenceChanged } = $props();
 
   let caTrusted = $state(false);
   let longPathsEnabled = $state(false);
   let tld = $state(".test");
   let themeMode = $state("dark"); // "system" | "dark" | "light"
   let preferredEditor = $state("vscode");
+  let updateChecksEnabled = $state(true);
 
   let caState = $state({ busy: false, error: "", operation: "" });
   let lpState = $state({ busy: false, error: "", operation: "" });
@@ -30,6 +31,7 @@
     const config = await invoke("get_config");
     tld = config.tld;
     preferredEditor = config.preferred_editor || "vscode";
+    updateChecksEnabled = config.update_checks_enabled !== false;
 
     const savedTheme = localStorage.getItem("devpanel-theme-mode") || "dark";
     themeMode = savedTheme;
@@ -84,12 +86,38 @@
       tldWarnings = [String(e)];
     }
   }
+
+  async function toggleUpdateChecks() {
+    const previous = updateChecksEnabled;
+    updateChecksEnabled = !updateChecksEnabled;
+    try {
+      await invoke("set_update_checks_enabled", { enabled: updateChecksEnabled });
+      onUpdatePreferenceChanged?.(updateChecksEnabled);
+    } catch (e) {
+      updateChecksEnabled = previous;
+      tldWarnings = [String(e)];
+    }
+  }
+
 </script>
 
 <div class="settings">
   <CardHeader title="Global Settings" subtitle="Configure system preferences, appearance, local domain suffixes, and SSL." />
 
   <div class="grid">
+    <div class="card">
+      <div class="card-header">
+        <Download class="icon text-accent" size={18} />
+        <div>
+          <h3>GitHub Updates</h3>
+          <p>Check GitHub Releases once when DevPanel opens. Updates are never downloaded automatically.</p>
+        </div>
+      </div>
+      <label class="toggle-row">
+        <input type="checkbox" checked={updateChecksEnabled} onchange={toggleUpdateChecks} />
+        <span>Notify me when a new version is available</span>
+      </label>
+    </div>
     <div class="card">
       <div class="card-header">
         <Code2 class="icon text-accent" size={18} />

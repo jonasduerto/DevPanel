@@ -59,7 +59,10 @@ fn find_nginx_dir(state: &AppState) -> Option<PathBuf> {
 // ====================== RELOAD ======================
 
 #[tauri::command]
-pub async fn reload_service(id: String, state: tauri::State<'_, AppState>) -> Result<ServiceActionResult, String> {
+pub async fn reload_service(
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ServiceActionResult, String> {
     match id.as_str() {
         "apache" => {
             let httpd = find_binary(&state, "apache", "httpd.exe")?;
@@ -83,7 +86,10 @@ pub async fn reload_service(id: String, state: tauri::State<'_, AppState>) -> Re
 // ====================== TEST CONFIG ======================
 
 #[tauri::command]
-pub async fn test_service_config(id: String, state: tauri::State<'_, AppState>) -> Result<ServiceActionResult, String> {
+pub async fn test_service_config(
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ServiceActionResult, String> {
     match id.as_str() {
         "apache" => {
             let httpd = find_binary(&state, "apache", "httpd.exe")?;
@@ -109,7 +115,10 @@ pub async fn test_service_config(id: String, state: tauri::State<'_, AppState>) 
 // ====================== LOG PATHS ======================
 
 #[tauri::command]
-pub fn get_service_log_paths(id: String, state: tauri::State<AppState>) -> Result<ServiceLogPaths, String> {
+pub fn get_service_log_paths(
+    id: String,
+    state: tauri::State<AppState>,
+) -> Result<ServiceLogPaths, String> {
     let root = state.service_mgr.root().clone();
     Ok(match id.as_str() {
         "apache" => {
@@ -126,26 +135,36 @@ pub fn get_service_log_paths(id: String, state: tauri::State<AppState>) -> Resul
                 access_log: Some(dir.join("logs/access.log").to_string_lossy().into_owned()),
             }
         }
-        "php" => {
-            ServiceLogPaths {
-                error_log: Some(root.join("data/logs/php_errors.log").to_string_lossy().into_owned()),
-                access_log: None,
-            }
-        }
-        "mysql" => {
-            ServiceLogPaths {
-                error_log: Some(root.join("data/logs/mysql_error.log").to_string_lossy().into_owned()),
-                access_log: None,
-            }
-        }
-        _ => ServiceLogPaths { error_log: None, access_log: None },
+        "php" => ServiceLogPaths {
+            error_log: Some(
+                root.join("data/logs/php_errors.log")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            access_log: None,
+        },
+        "mysql" => ServiceLogPaths {
+            error_log: Some(
+                root.join("data/logs/mysql_error.log")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+            access_log: None,
+        },
+        _ => ServiceLogPaths {
+            error_log: None,
+            access_log: None,
+        },
     })
 }
 
 // ====================== CONFIG PATHS ======================
 
 #[tauri::command]
-pub fn get_service_config_paths(id: String, state: tauri::State<AppState>) -> Result<ServiceConfigPaths, String> {
+pub fn get_service_config_paths(
+    id: String,
+    state: tauri::State<AppState>,
+) -> Result<ServiceConfigPaths, String> {
     let root = state.service_mgr.root().clone();
     Ok(match id.as_str() {
         "apache" => {
@@ -154,7 +173,9 @@ pub fn get_service_config_paths(id: String, state: tauri::State<AppState>) -> Re
                 main_config: Some(dir.join("conf/httpd.conf").to_string_lossy().into_owned()),
                 extra_configs: vec![
                     dir.join("conf/mod_php.conf").to_string_lossy().into_owned(),
-                    root.join("data/vhosts/apache").to_string_lossy().into_owned(),
+                    root.join("data/vhosts/apache")
+                        .to_string_lossy()
+                        .into_owned(),
                 ],
             }
         }
@@ -162,45 +183,65 @@ pub fn get_service_config_paths(id: String, state: tauri::State<AppState>) -> Re
             let dir = find_nginx_dir(&state).unwrap_or_else(|| root.join("bin/nginx"));
             ServiceConfigPaths {
                 main_config: Some(dir.join("conf/nginx.conf").to_string_lossy().into_owned()),
-                extra_configs: vec![
-                    root.join("data/vhosts/nginx").to_string_lossy().into_owned(),
-                ],
+                extra_configs: vec![root
+                    .join("data/vhosts/nginx")
+                    .to_string_lossy()
+                    .into_owned()],
             }
         }
         "php" => {
             let php = find_binary_in_bin(&root, "php", "php.exe")
                 .or_else(|| find_binary_in_bin(&root, "php", "php-cgi.exe"));
-            let php_dir = php.as_ref().and_then(|p| p.parent().map(|p| p.to_path_buf()));
+            let php_dir = php
+                .as_ref()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()));
             ServiceConfigPaths {
-                main_config: php_dir.as_ref().map(|d| d.join("php.ini").to_string_lossy().into_owned()),
-                extra_configs: php_dir.map(|d| d.join("ext").to_string_lossy().into_owned()).into_iter().collect(),
+                main_config: php_dir
+                    .as_ref()
+                    .map(|d| d.join("php.ini").to_string_lossy().into_owned()),
+                extra_configs: php_dir
+                    .map(|d| d.join("ext").to_string_lossy().into_owned())
+                    .into_iter()
+                    .collect(),
             }
         }
         "redis" => {
             let redis = find_binary_in_bin(&root, "redis", "redis-server.exe");
-            let redis_dir = redis.as_ref().and_then(|p| p.parent().map(|p| p.to_path_buf()));
+            let redis_dir = redis
+                .as_ref()
+                .and_then(|p| p.parent().map(|p| p.to_path_buf()));
             ServiceConfigPaths {
-                main_config: redis_dir.as_ref().map(|d| d.join("redis.conf").to_string_lossy().into_owned()),
+                main_config: redis_dir
+                    .as_ref()
+                    .map(|d| d.join("redis.conf").to_string_lossy().into_owned()),
                 extra_configs: vec![],
             }
         }
-        _ => ServiceConfigPaths { main_config: None, extra_configs: vec![] },
+        _ => ServiceConfigPaths {
+            main_config: None,
+            extra_configs: vec![],
+        },
     })
 }
 
 // ====================== READ LOG ======================
 
 #[tauri::command]
-pub fn read_service_log(id: String, max_lines: u32, state: tauri::State<AppState>) -> Result<String, String> {
+pub fn read_service_log(
+    id: String,
+    max_lines: u32,
+    state: tauri::State<AppState>,
+) -> Result<String, String> {
     let paths = get_service_log_paths(id, state)?;
-    let log_path = paths.error_log.or(paths.access_log)
+    let log_path = paths
+        .error_log
+        .or(paths.access_log)
         .ok_or_else(|| "No log files found for this service.".to_string())?;
     let path = std::path::Path::new(&log_path);
     if !path.is_file() {
         return Ok(String::new());
     }
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("Could not read log: {e}"))?;
+    let content = std::fs::read_to_string(path).map_err(|e| format!("Could not read log: {e}"))?;
     let lines: Vec<&str> = content.lines().collect();
     let take = lines.len().min(max_lines as usize);
     Ok(lines[lines.len() - take..].join("\n"))

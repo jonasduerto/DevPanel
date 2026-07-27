@@ -418,7 +418,10 @@ impl ServiceManager {
                 ],
                 None => vec!["php-cgi.exe".into(), "php.exe".into()],
             };
-            let Some(binary) = candidates.into_iter().find(|candidate| self.find_binary("php", candidate).is_some()) else {
+            let Some(binary) = candidates
+                .into_iter()
+                .find(|candidate| self.find_binary("php", candidate).is_some())
+            else {
                 if let Some(version) = version {
                     log::warn!("PHP {version} was requested by a workspace but is not installed in DevPanel/bin/php");
                 }
@@ -448,7 +451,10 @@ impl ServiceManager {
             for (directive, value) in [
                 ("sys_temp_dir", php_tmp.to_string_lossy().into_owned()),
                 ("upload_tmp_dir", php_tmp.to_string_lossy().into_owned()),
-                ("session.save_path", php_sessions.to_string_lossy().into_owned()),
+                (
+                    "session.save_path",
+                    php_sessions.to_string_lossy().into_owned(),
+                ),
                 ("error_log", php_error_log.to_string_lossy().into_owned()),
                 // Dev-friendly defaults, set here (not in each version's own
                 // php.ini) so they survive reinstalling or switching PHP
@@ -473,8 +479,12 @@ impl ServiceManager {
 
             services.push(ServiceDefinition {
                 id: service_id,
-                name: version.map(|version| format!("PHP {version}")).unwrap_or_else(|| "PHP".into()),
-                description: version.map(|version| format!("PHP {version} Runtime")).unwrap_or_else(|| "PHP Runtime".into()),
+                name: version
+                    .map(|version| format!("PHP {version}"))
+                    .unwrap_or_else(|| "PHP".into()),
+                description: version
+                    .map(|version| format!("PHP {version} Runtime"))
+                    .unwrap_or_else(|| "PHP Runtime".into()),
                 binary: binary.clone(),
                 args,
                 work_dir: Some(
@@ -509,10 +519,7 @@ impl ServiceManager {
                     mysql_binary.split('/').next().unwrap_or_default()
                 )
             };
-            let raw_key = mysql_binary
-                .split(['/', '\\'])
-                .next()
-                .unwrap_or("default");
+            let raw_key = mysql_binary.split(['/', '\\']).next().unwrap_or("default");
             let data_key = if raw_key == "mysqld.exe" || raw_key.is_empty() {
                 "default".to_string()
             } else {
@@ -598,10 +605,7 @@ impl ServiceManager {
                 name: "Nginx".into(),
                 description: "Nginx Web Server".into(),
                 binary: "nginx.exe".into(),
-                args: vec![
-                    "-p".into(),
-                    nginx_dir.to_string_lossy().into_owned(),
-                ],
+                args: vec!["-p".into(), nginx_dir.to_string_lossy().into_owned()],
                 work_dir: Some(nginx_rel),
                 port: Some(ports.nginx),
                 category: ServiceCategory::WebServer,
@@ -702,7 +706,8 @@ impl ServiceManager {
 /// port, so vhost rendering and service discovery never need shared mutable
 /// state to agree on a version-to-port mapping.
 pub fn php_fastcgi_port(version: Option<&str>) -> u16 {
-    let Some(version) = version.filter(|value| !value.trim().is_empty() && *value != "inherit") else {
+    let Some(version) = version.filter(|value| !value.trim().is_empty() && *value != "inherit")
+    else {
         return 9000;
     };
     let mut parts = version.split('.');
@@ -918,18 +923,15 @@ fn generate_apache_php_handler(root: &Path, apache_dir: &Path) -> Result<(), Str
 
     // Locate the Apache SAPI DLL shipped alongside this PHP build.
     let dll = std::fs::read_dir(&php_dir).ok().and_then(|entries| {
-        entries
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .find(|p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|n| {
-                        let n = n.to_ascii_lowercase();
-                        n.starts_with("php") && n.ends_with("apache2_4.dll")
-                    })
-                    .unwrap_or(false)
-            })
+        entries.filter_map(Result::ok).map(|e| e.path()).find(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| {
+                    let n = n.to_ascii_lowercase();
+                    n.starts_with("php") && n.ends_with("apache2_4.dll")
+                })
+                .unwrap_or(false)
+        })
     });
     let Some(dll) = dll else {
         return std::fs::write(

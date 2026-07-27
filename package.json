@@ -9,7 +9,12 @@
     "preview": "vite preview",
     "check": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json",
     "check:watch": "svelte-kit sync && svelte-check --tsconfig ./jsconfig.json --watch",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build",
+    "validate": "npm run check && cargo check --manifest-path src-tauri/Cargo.toml",
+    "release:menu": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build-windows-release.ps1 -Menu",
+    "release:portable": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/build-windows-release.ps1 -PortableOnly"
   },
   "license": "SEE LICENSE IN LICENSE",
   "dependencies": {

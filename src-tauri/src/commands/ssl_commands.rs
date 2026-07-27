@@ -121,7 +121,11 @@ pub async fn finish_domain_setup(
 pub async fn sync_workspace_hosts(state: tauri::State<'_, AppState>) -> Result<usize, String> {
     let domains = {
         let store = state.workspace_store.lock().await;
-        store.list().into_iter().map(|workspace| workspace.domain).collect::<Vec<_>>()
+        store
+            .list()
+            .into_iter()
+            .map(|workspace| workspace.domain)
+            .collect::<Vec<_>>()
     };
     let count = domains.len();
     tokio::task::spawn_blocking(move || {

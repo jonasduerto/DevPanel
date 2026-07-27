@@ -50,9 +50,22 @@ pub(crate) fn find_tool(root: &Path, dir_name: &str, binary: &str) -> Option<Pat
 /// PATH first — needed because tools like `composer.bat` shell out to
 /// whatever `php` resolves to, and this DevPanel installation's PHP isn't
 /// necessarily on the system PATH.
-fn run_tool(root: &Path, bin: &Path, args: &[&str], cwd: &Path, label: &str, warnings: &mut Vec<String>) {
-    let path = match find_binary_in_bin(root, "php", "php.exe").and_then(|p| p.parent().map(Path::to_path_buf)) {
-        Some(php_dir) => format!("{};{}", php_dir.display(), std::env::var("PATH").unwrap_or_default()),
+fn run_tool(
+    root: &Path,
+    bin: &Path,
+    args: &[&str],
+    cwd: &Path,
+    label: &str,
+    warnings: &mut Vec<String>,
+) {
+    let path = match find_binary_in_bin(root, "php", "php.exe")
+        .and_then(|p| p.parent().map(Path::to_path_buf))
+    {
+        Some(php_dir) => format!(
+            "{};{}",
+            php_dir.display(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
         None => std::env::var("PATH").unwrap_or_default(),
     };
     let status = Command::new(bin)
@@ -174,8 +187,11 @@ pub fn provision(
         id: workspace.id.clone(),
         domain: workspace.domain.clone(),
         preset: workspace.preset.clone(),
-        php_version: (!workspace.runtime_profile.php_version.eq_ignore_ascii_case("inherit"))
-            .then(|| workspace.runtime_profile.php_version.clone()),
+        php_version: (!workspace
+            .runtime_profile
+            .php_version
+            .eq_ignore_ascii_case("inherit"))
+        .then(|| workspace.runtime_profile.php_version.clone()),
         doc_root: default_doc_root(&workspace.preset).to_string(),
         ssl_enabled: false,
         ssl_cert_file: None,

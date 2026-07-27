@@ -55,9 +55,12 @@ desktop.ini
 # ─── Misc ──────────────────────────────────────────────────────
 # Local diagnostics and one-off helper scripts are not product source.
 scripts/
+/tools/build-windows-release.ps1
+/tools/build-windows-release.bat
 
 # Local config overrides (not to be shared)
 *.local
 
 # Nested git artifact (if any)
 DevPanel/
+tools/build-windows-release.ps1

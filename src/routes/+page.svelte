@@ -1,5 +1,7 @@
 <script>
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { invoke } from "@tauri-apps/api/core";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import { onMount } from "svelte";
   import { attachConsole } from "@tauri-apps/plugin-log";
   import PanelView from "#lib/PanelView.svelte";
@@ -22,11 +24,18 @@
   let toasts = $state([]);
   let loading = $state({ busy: false, operation: "" });
   let statusMessage = $state("");
+  let updateInfo = $state(/** @type {{ current_version: string, latest_version: string, download_url: string } | null} */ (null));
 
   onMount(() => {
     const userLocale = localStorage.getItem("devpanel-locale") || "en";
     loadDictionary(userLocale);
     locale.set(userLocale);
+
+    // A single, short GitHub Releases request at launch. Failures are silent
+    // so an offline local-development workflow remains unaffected.
+    invoke("check_for_update")
+      .then((result) => { if (result.available) updateInfo = result; })
+      .catch(() => {});
 
     // Theme initialization
     const themeMode = localStorage.getItem("devpanel-theme-mode") || "dark";
@@ -85,6 +94,17 @@
 
   function closePanel() {
     appWindow.hide();
+  }
+
+  async function openUpdateDownload() {
+    if (!updateInfo?.download_url) return;
+    await openUrl(updateInfo.download_url);
+    updateInfo = null;
+  }
+
+  /** @param {boolean} enabled */
+  function handleUpdatePreferenceChanged(enabled) {
+    if (!enabled) updateInfo = null;
   }
 
   appWindow.onCloseRequested((event) => {
@@ -171,7 +191,7 @@
     {:else if view === "modules" || view === "addons"}
       <ModulesView />
     {:else if view === "settings"}
-      <SettingsView {theme} {toggleTheme} />
+      <SettingsView {theme} {toggleTheme} onUpdatePreferenceChanged={handleUpdatePreferenceChanged} />
     {:else}
       <ToolsView />
     {/if}
@@ -179,4 +199,22 @@
 
   <StatusBar message={statusMessage} />
 </div>
+
+{#if updateInfo}
+  <div class="modal-overlay" role="presentation">
+    <dialog open class="modal-dialog" aria-labelledby="update-available-title">
+      <div class="modal-header">
+        <h3 id="update-available-title">Update available</h3>
+      </div>
+      <div class="modal-body">
+        <p><strong>{updateInfo.latest_version}</strong> is available. You are running {updateInfo.current_version}.</p>
+        <p>DevPanel will open the GitHub release page; nothing is downloaded or installed automatically.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" onclick={() => (updateInfo = null)}>Later</button>
+        <button class="btn-primary" onclick={openUpdateDownload}>Open GitHub release</button>
+      </div>
+    </dialog>
+  </div>
+{/if}
 
