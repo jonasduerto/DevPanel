@@ -1,17 +1,11 @@
-# Security policy
+# Security
 
-## Experimental release scope
+DevPanel is experimental software. Use backed-up, non-production data while evaluating it.
 
-DevPanel `0.2.0-beta.1` is a public testing release. It manages local web-server processes, databases, certificates, hosts-file entries, and WordPress installations. Use disposable or backed-up development data while evaluating it.
+## Report a vulnerability
 
-## Supported releases
+Do not publish sensitive security details in a public issue. Contact the repository owner privately through GitHub with a concise description, affected version, impact, and reproduction steps. Never include passwords, tokens, certificates, private keys, database dumps, or local project files.
 
-Only the latest published pre-release is supported during the beta period.
+## Repository safety
 
-## Reporting a vulnerability
-
-Do not open a public issue for a vulnerability that could expose local projects, credentials, certificates, or arbitrary command execution. Contact the repository owner privately through GitHub and include reproduction steps, impact, and affected version. Do not attach secrets, database dumps, certificates, or private keys.
-
-## Repository hygiene
-
-Runtime binaries, databases, sites, certificates, local environment files, logs, and build output are intentionally ignored by Git. CI receives source-available code only; signing credentials are GitHub Actions secrets and are never committed.
+Local runtimes, databases, sites, certificates, logs, build output, and environment files are excluded from source control. Credentials belong in local configuration or GitHub Actions secrets and must never be committed.
