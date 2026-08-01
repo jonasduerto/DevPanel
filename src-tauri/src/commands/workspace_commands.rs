@@ -16,6 +16,8 @@ use crate::workspace::{
     Controllable, SiteRuntimeProfile, WordPressAdmin, Workspace, WorkspaceBuilder, WorkspacePreset,
 };
 
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 #[derive(Serialize)]
 pub struct CreateWorkspaceResult {
     pub workspace: Workspace,
