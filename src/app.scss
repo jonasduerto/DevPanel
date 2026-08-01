@@ -2508,6 +2508,32 @@ p {
     color: var(--text-subtle);
   }
 
+  .runtime-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: var(--text-muted);
+    font-size: 10px;
+  }
+
+  .runtime-field input,
+  .runtime-field select {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    color: var(--text-main);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    font-size: 11px;
+  }
+
+  .laravel-env-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 7px;
+  }
+
   .menu-group-label {
     padding: 6px 8px 2px;
     font-size: 9px;

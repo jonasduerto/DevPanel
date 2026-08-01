@@ -46,9 +46,15 @@
   let runtimeCatalog = $state(null);
   /** @type {any | null} */
   let runtimeProfile = $state(null);
+  /** @type {any | null} */
+  let siteSettings = $state(null);
+  /** @type {any | null} */
+  let laravelEnvironment = $state(null);
   let phpOverrideUnavailable = $state(false);
   let toggleState = $state({ busy: false, error: "", operation: "" });
   let profileState = $state({ busy: false, error: "", operation: "" });
+  let settingsState = $state({ busy: false, error: "", operation: "" });
+  let laravelState = $state({ busy: false, error: "", operation: "" });
   let preferredEditor = $state("vscode");
 
   onMount(async () => {
@@ -62,6 +68,10 @@
 
   function isWordPressSite() {
     return workspace.preset?.toLowerCase() === "wordpress";
+  }
+
+  function isLaravelSite() {
+    return workspace.preset?.toLowerCase() === "laravel";
   }
 
   function usesDatabase() {
@@ -164,6 +174,14 @@
     runtimeProfile = {
       php_version: workspace.runtime_profile?.php_version ?? "inherit",
     };
+    siteSettings = {
+      domain: workspace.domain,
+      documentRoot: workspace.document_root ?? "",
+      dbName: workspace.db_name,
+    };
+    if (isLaravelSite()) {
+      laravelEnvironment = await invoke("get_laravel_environment", { id: workspace.id });
+    }
   }
 
   async function saveRuntimeProfile() {
@@ -173,6 +191,30 @@
       await invoke("set_workspace_runtime_profile", { id: workspace.id, profile: runtimeProfile });
       onUpdated?.();
     }, "Guardando");
+  }
+
+  async function saveSiteSettings() {
+    if (!siteSettings) return;
+    error = "";
+    await invokeWith(settingsState, async () => {
+      const result = await invoke("update_workspace_settings", {
+        id: workspace.id,
+        settings: siteSettings,
+      });
+      if (result.warnings?.length) error = result.warnings.join("\n");
+      await onUpdated?.();
+    }, "Saving site settings", { toastSuccess: "Site settings saved" });
+  }
+
+  async function saveLaravelEnvironment() {
+    if (!laravelEnvironment) return;
+    error = "";
+    await invokeWith(laravelState, async () => {
+      await invoke("save_laravel_environment", {
+        id: workspace.id,
+        environment: laravelEnvironment,
+      });
+    }, "Saving Laravel environment", { toastSuccess: ".env saved" });
   }
 
   /** @param {"configuration" | "database" | "wordpress"} panel */
@@ -300,6 +342,22 @@
         <div class="detail-row"><span>Protocol</span><strong class={workspace.https_ready ? "txt-green" : ""}>{workspace.https_ready ? "HTTPS" : "HTTP"}</strong></div>
         <div class="detail-row"><span>Preset</span><strong>{workspace.preset}</strong></div>
       </div>
+      {#if siteSettings}
+        <div class="detail-section">
+          <div class="detail-section-title">Site binding</div>
+          <label class="runtime-field"><span>Local domain</span><input bind:value={siteSettings.domain} disabled={workspace.running} placeholder="my-project.dev" /></label>
+          <label class="runtime-field"><span>Document root</span><input bind:value={siteSettings.documentRoot} disabled={workspace.running} placeholder="public" /></label>
+          <label class="runtime-field"><span>Database name</span><input bind:value={siteSettings.dbName} disabled={workspace.running} placeholder="project_db" /></label>
+          {#if workspace.running}
+            <div class="tool-note">Stop this site before changing its domain, document root or database binding.</div>
+          {:else}
+            <button class="btn-subtle" onclick={saveSiteSettings} disabled={settingsState.busy}>
+              {settingsState.busy ? "Saving..." : "Save Site Binding"}
+            </button>
+            <div class="tool-note">Changing the name updates DevPanel's binding; use Repair database afterward to create or reconnect it. Changing a domain requires Configure HTTPS again.</div>
+          {/if}
+        </div>
+      {/if}
       {#if runtimeProfile && runtimeCatalog}
         <div class="detail-section">
           <div class="detail-section-title">Runtime de PHP</div>
@@ -329,6 +387,27 @@
           <div class="detail-row"><span>Username</span><code>{workspace.wordpress_admin.username}</code></div>
           <div class="detail-row"><span>Password</span><code>{workspace.wordpress_admin.password}</code></div>
           <div class="detail-row"><span>Email</span><code>{workspace.wordpress_admin.email}</code></div>
+        </div>
+      {/if}
+      {#if isLaravelSite() && laravelEnvironment}
+        <div class="detail-section">
+          <div class="detail-section-title">Laravel .env</div>
+          <label class="runtime-field"><span>APP_URL</span><input bind:value={laravelEnvironment.app_url} disabled={workspace.running} /></label>
+          <div class="laravel-env-grid">
+            <label class="runtime-field"><span>DB connection</span><input bind:value={laravelEnvironment.db_connection} disabled={workspace.running} /></label>
+            <label class="runtime-field"><span>DB host</span><input bind:value={laravelEnvironment.db_host} disabled={workspace.running} /></label>
+            <label class="runtime-field"><span>DB port</span><input bind:value={laravelEnvironment.db_port} disabled={workspace.running} /></label>
+            <label class="runtime-field"><span>DB database</span><input bind:value={laravelEnvironment.db_database} disabled={workspace.running} /></label>
+            <label class="runtime-field"><span>DB username</span><input bind:value={laravelEnvironment.db_username} disabled={workspace.running} /></label>
+            <label class="runtime-field"><span>DB password</span><input type="password" bind:value={laravelEnvironment.db_password} disabled={workspace.running} placeholder="Leave blank to keep current" /></label>
+          </div>
+          {#if workspace.running}
+            <div class="tool-note">Stop this site before editing .env values.</div>
+          {:else}
+            <button class="btn-subtle" onclick={saveLaravelEnvironment} disabled={laravelState.busy}>
+              {laravelState.busy ? "Saving..." : "Save Laravel .env"}
+            </button>
+          {/if}
         </div>
       {/if}
       <div class="detail-section">

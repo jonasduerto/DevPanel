@@ -11,7 +11,7 @@ use crate::environment;
 use crate::service::find_binary_in_bin;
 use crate::service::types::ServiceStatus;
 use crate::state::AppState;
-use crate::workspace::scaffold;
+use crate::workspace::{scaffold, vhost};
 use crate::workspace::{
     Controllable, SiteRuntimeProfile, WordPressAdmin, Workspace, WorkspaceBuilder, WorkspacePreset,
 };
@@ -29,6 +29,36 @@ pub struct DiscoveredWorkspaceFolder {
     pub path: String,
     pub suggested_preset: String,
     pub suggested_document_root: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSettingsInput {
+    pub domain: String,
+    #[serde(default)]
+    pub document_root: String,
+    #[serde(default)]
+    pub db_name: String,
+}
+
+#[derive(Serialize)]
+pub struct UpdateWorkspaceSettingsResult {
+    pub workspace: Workspace,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaravelEnvironment {
+    pub app_url: String,
+    pub db_connection: String,
+    pub db_host: String,
+    pub db_port: String,
+    pub db_database: String,
+    pub db_username: String,
+    /// Only accepted on save. It is never returned from a user's .env file.
+    #[serde(default, skip_serializing)]
+    pub db_password: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1153,6 +1183,213 @@ pub async fn set_workspace_runtime_profile(
     .await
     .map_err(|error| format!("Runtime profile update task panicked: {error}"))??;
     Ok(workspace)
+}
+
+fn validate_domain(domain: &str) -> Result<String, String> {
+    let normalized = domain.trim().trim_matches('.').to_ascii_lowercase();
+    if normalized.len() > 253
+        || normalized.split('.').count() < 2
+        || !normalized
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '.' || character == '-')
+        || normalized.split('.').any(|label| label.is_empty() || label.starts_with('-') || label.ends_with('-'))
+    {
+        return Err("Enter a valid local domain, for example my-project.dev.".into());
+    }
+    Ok(normalized)
+}
+
+fn validate_db_name(db_name: &str) -> Result<String, String> {
+    let value = db_name.trim().to_ascii_lowercase();
+    if value.is_empty() || !value.chars().all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || character == '_') {
+        return Err("Database names may use lowercase letters, numbers and underscores only.".into());
+    }
+    Ok(value)
+}
+
+#[tauri::command]
+pub async fn update_workspace_settings(
+    id: String,
+    settings: WorkspaceSettingsInput,
+    state: tauri::State<'_, AppState>,
+) -> Result<UpdateWorkspaceSettingsResult, String> {
+    let domain = validate_domain(&settings.domain)?;
+    let document_root = settings.document_root.trim().trim_matches(['/', '\\']).to_string();
+    if PathBuf::from(&document_root).is_absolute()
+        || document_root.split(['/', '\\']).any(|part| part == "..")
+    {
+        return Err("Document root must be a relative folder inside the project.".into());
+    }
+    let db_name = validate_db_name(&settings.db_name)?;
+
+    let mut workspace = {
+        let store = state.workspace_store.lock().await;
+        let workspace = store.get(&id).ok_or_else(|| format!("Workspace '{id}' not found"))?;
+        if workspace.is_running() {
+            return Err("Stop this site before changing its domain, document root or database binding.".into());
+        }
+        if store.list().iter().any(|other| other.id != id && other.domain.eq_ignore_ascii_case(&domain)) {
+            return Err("Another Site is already using this domain.".into());
+        }
+        workspace
+    };
+    let root = state.service_mgr.root().clone();
+    let (www_dir, stack, http_port) = {
+        let config = state.config.lock().await;
+        let stack = environment::find_stack(
+            config.get().active_stack_id.as_deref().unwrap_or(environment::DEFAULT_STACK_ID),
+        )?;
+        (
+            config.get().www_dir.clone().unwrap_or_else(|| "www".into()),
+            stack.clone(),
+            config.get().ports.public_http_port(&stack),
+        )
+    };
+    let source_path = scaffold::workspace_path(&root, &www_dir, &workspace);
+    if !source_path.is_dir() {
+        return Err("The project folder is missing; restore it before editing this Site.".into());
+    }
+    if !document_root.is_empty() && !source_path.join(&document_root).is_dir() {
+        return Err(format!("Document root does not exist: {}", source_path.join(&document_root).display()));
+    }
+
+    let old_domain = workspace.domain.clone();
+    let domain_changed = old_domain != domain;
+    workspace.domain = domain;
+    workspace.document_root = document_root.clone();
+    workspace.db_name = db_name;
+    workspace.requires_database = true;
+    if domain_changed {
+        // A certificate belongs to its exact host name. Serve HTTP until the
+        // explicit Configure HTTPS action issues a certificate for the new one.
+        workspace.https_ready = false;
+    }
+    let workspace_for_write = workspace.clone();
+    let warnings = tokio::task::spawn_blocking(move || -> Result<Vec<String>, String> {
+        let metadata_dir = scaffold::metadata_path(&root, &www_dir, &workspace_for_write.id);
+        let mut manifest = crate::workspace::manifest::WorkspaceManifest::load(&metadata_dir)?;
+        manifest.domain = workspace_for_write.domain.clone();
+        manifest.doc_root = workspace_for_write.document_root.clone();
+        if domain_changed {
+            manifest.ssl_enabled = false;
+            manifest.ssl_cert_file = None;
+            manifest.ssl_key_file = None;
+        }
+        manifest.save(&metadata_dir)?;
+        vhost::regenerate(&root, &www_dir, &workspace_for_write, &stack, http_port)?;
+        let mut warnings = Vec::new();
+        if domain_changed {
+            if let Err(error) = crate::ssl::hosts::remove_entry(&old_domain) {
+                warnings.push(format!("Old hosts entry needs cleanup: {error}"));
+            }
+            if let Err(error) = crate::ssl::hosts::add_entry(&workspace_for_write.domain) {
+                warnings.push(format!("New hosts entry needs setup: {error}"));
+            }
+        }
+        Ok(warnings)
+    })
+    .await
+    .map_err(|error| format!("Site settings update task panicked: {error}"))??;
+
+    let mut store = state.workspace_store.lock().await;
+    store.update(workspace.clone())?;
+    Ok(UpdateWorkspaceSettingsResult { workspace, warnings })
+}
+
+fn env_value(contents: &str, key: &str, fallback: &str) -> String {
+    contents
+        .lines()
+        .find_map(|line| line.strip_prefix(&format!("{key}=")))
+        .unwrap_or(fallback)
+        .trim_matches('"')
+        .to_string()
+}
+
+fn update_env_values(contents: &str, values: &[(&str, &str)]) -> String {
+    let mut seen = std::collections::HashSet::new();
+    let mut output = contents
+        .lines()
+        .map(|line| {
+            for (key, value) in values {
+                let prefix = format!("{key}=");
+                if line.starts_with(&prefix) {
+                    seen.insert(*key);
+                    return format!("{key}={value}");
+                }
+            }
+            line.to_string()
+        })
+        .collect::<Vec<_>>();
+    for (key, value) in values {
+        if !seen.contains(key) {
+            output.push(format!("{key}={value}"));
+        }
+    }
+    format!("{}\n", output.join("\n"))
+}
+
+#[tauri::command]
+pub async fn get_laravel_environment(
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<LaravelEnvironment, String> {
+    let workspace = state.workspace_store.lock().await.get(&id).ok_or_else(|| format!("Workspace '{id}' not found"))?;
+    if !workspace.preset.as_str().eq_ignore_ascii_case("laravel") {
+        return Err("This editor is available for Laravel sites only.".into());
+    }
+    let root = state.service_mgr.root().clone();
+    let www_dir = state.config.lock().await.get().www_dir.clone().unwrap_or_else(|| "www".into());
+    tokio::task::spawn_blocking(move || {
+        let path = scaffold::workspace_path(&root, &www_dir, &workspace).join(".env");
+        let contents = fs::read_to_string(&path).map_err(|error| format!("Could not read Laravel .env: {error}"))?;
+        Ok(LaravelEnvironment {
+            app_url: env_value(&contents, "APP_URL", &format!("http://{}", workspace.domain)),
+            db_connection: env_value(&contents, "DB_CONNECTION", "mysql"),
+            db_host: env_value(&contents, "DB_HOST", "127.0.0.1"),
+            db_port: env_value(&contents, "DB_PORT", "3306"),
+            db_database: env_value(&contents, "DB_DATABASE", &workspace.db_name),
+            db_username: env_value(&contents, "DB_USERNAME", "root"),
+            db_password: String::new(),
+        })
+    })
+    .await
+    .map_err(|error| format!("Laravel environment read task panicked: {error}"))?
+}
+
+#[tauri::command]
+pub async fn save_laravel_environment(
+    id: String,
+    environment: LaravelEnvironment,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let workspace = state.workspace_store.lock().await.get(&id).ok_or_else(|| format!("Workspace '{id}' not found"))?;
+    if !workspace.preset.as_str().eq_ignore_ascii_case("laravel") {
+        return Err("This editor is available for Laravel sites only.".into());
+    }
+    if workspace.is_running() {
+        return Err("Stop this site before changing Laravel environment settings.".into());
+    }
+    let root = state.service_mgr.root().clone();
+    let www_dir = state.config.lock().await.get().www_dir.clone().unwrap_or_else(|| "www".into());
+    tokio::task::spawn_blocking(move || {
+        let path = scaffold::workspace_path(&root, &www_dir, &workspace).join(".env");
+        let contents = fs::read_to_string(&path).map_err(|error| format!("Could not read Laravel .env: {error}"))?;
+        let mut values = vec![
+            ("APP_URL", environment.app_url.as_str()),
+            ("DB_CONNECTION", environment.db_connection.as_str()),
+            ("DB_HOST", environment.db_host.as_str()),
+            ("DB_PORT", environment.db_port.as_str()),
+            ("DB_DATABASE", environment.db_database.as_str()),
+            ("DB_USERNAME", environment.db_username.as_str()),
+        ];
+        if !environment.db_password.is_empty() {
+            values.push(("DB_PASSWORD", environment.db_password.as_str()));
+        }
+        fs::write(&path, update_env_values(&contents, &values))
+            .map_err(|error| format!("Could not save Laravel .env: {error}"))
+    })
+    .await
+    .map_err(|error| format!("Laravel environment save task panicked: {error}"))?
 }
 
 #[tauri::command]
