@@ -37,7 +37,7 @@
   let error = $state("");
   let showMenu = $state(false);
   let showDebug = $state(false);
-  /** @type {"configuration" | "database" | "wordpress" | null} */
+  /** @type {"configuration" | "database" | "tools" | "wordpress" | null} */
   let detailPanel = $state(null);
   let confirmDelete = $state(false);
   /** @type {SitePaths | null} */
