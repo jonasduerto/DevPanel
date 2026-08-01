@@ -50,11 +50,15 @@
   let siteSettings = $state(null);
   /** @type {any | null} */
   let laravelEnvironment = $state(null);
+  /** @type {any | null} */
+  let projectCapabilities = $state(null);
+  let projectTaskOutput = $state("");
   let phpOverrideUnavailable = $state(false);
   let toggleState = $state({ busy: false, error: "", operation: "" });
   let profileState = $state({ busy: false, error: "", operation: "" });
   let settingsState = $state({ busy: false, error: "", operation: "" });
   let laravelState = $state({ busy: false, error: "", operation: "" });
+  let projectTaskState = $state({ busy: false, error: "", operation: "" });
   let showLaravelPassword = $state(false);
   let preferredEditor = $state("vscode");
 
@@ -180,6 +184,7 @@
       documentRoot: workspace.document_root ?? "",
       dbName: workspace.db_name,
     };
+    projectCapabilities = await invoke("get_project_capabilities", { id: workspace.id });
     if (isLaravelSite()) {
       laravelEnvironment = await invoke("get_laravel_environment", { id: workspace.id });
     }
@@ -227,6 +232,15 @@
       }
       await onUpdated?.();
     }, "Synchronizing database", { toastSuccess: "Database and project configuration synchronized" });
+  }
+
+  /** @param {string} task */
+  async function runProjectTask(task) {
+    projectTaskOutput = "";
+    error = "";
+    await invokeWith(projectTaskState, async () => {
+      projectTaskOutput = await invoke("run_project_task", { id: workspace.id, task });
+    }, "Running project task", { toastSuccess: "Project task completed" });
   }
 
   /** @param {"configuration" | "database" | "wordpress"} panel */
@@ -424,6 +438,43 @@
               {showLaravelPassword ? "Hide password" : "Show password"}
             </button>
           {/if}
+        </div>
+      {/if}
+      {#if projectCapabilities}
+        <div class="detail-section">
+          <div class="detail-section-title">Project tools</div>
+          <div class="project-files">
+            {#if projectCapabilities.composerJson}<span>composer.json</span>{/if}
+            {#if projectCapabilities.composerLock}<span>composer.lock</span>{/if}
+            {#if projectCapabilities.packageJson}<span>package.json</span>{/if}
+            {#if projectCapabilities.viteConfig}<span>vite.config</span>{/if}
+            {#if projectCapabilities.artisan}<span>artisan</span>{/if}
+            {#if projectCapabilities.laravelEnv}<span>.env</span>{/if}
+          </div>
+          {#if projectCapabilities.composerJson}
+            <div class="project-task-row">
+              <button class="btn-subtle" onclick={() => runProjectTask("composer_install")} disabled={projectTaskState.busy}>Composer install</button>
+              <button class="btn-subtle" onclick={() => runProjectTask("composer_update")} disabled={projectTaskState.busy}>Composer update</button>
+            </div>
+          {/if}
+          {#if projectCapabilities.packageJson}
+            <div class="project-task-row">
+              <button class="btn-subtle" onclick={() => runProjectTask("npm_install")} disabled={projectTaskState.busy}>NPM install</button>
+              <button class="btn-subtle" onclick={() => runProjectTask("npm_update")} disabled={projectTaskState.busy}>NPM update</button>
+            </div>
+            {#if !projectCapabilities.devpanelNodeAvailable}<div class="tool-note">Node.js is missing from DevPanel Modules. Install it there before running NPM.</div>{/if}
+          {/if}
+          {#if projectCapabilities.artisan}
+            <div class="project-task-row">
+              <button class="btn-subtle" onclick={() => runProjectTask("artisan_migrate")} disabled={projectTaskState.busy}>Migrate</button>
+              <button class="btn-subtle" onclick={() => runProjectTask("artisan_cache_clear")} disabled={projectTaskState.busy}>Clear all cache</button>
+              <button class="btn-subtle" onclick={() => runProjectTask("artisan_config_clear")} disabled={projectTaskState.busy}>Clear config</button>
+              <button class="btn-subtle" onclick={() => runProjectTask("artisan_route_clear")} disabled={projectTaskState.busy}>Clear routes</button>
+              <button class="btn-subtle" onclick={() => runProjectTask("artisan_view_clear")} disabled={projectTaskState.busy}>Clear views</button>
+            </div>
+          {/if}
+          {#if projectTaskState.busy}<div class="tool-note">{projectTaskState.operation || "Running..."}</div>{/if}
+          {#if projectTaskOutput}<DetailsOutput title="Project task output" value={projectTaskOutput} />{/if}
         </div>
       {/if}
       <div class="detail-section">

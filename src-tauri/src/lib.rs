@@ -55,6 +55,7 @@ use commands::workspace_commands::{
     set_php_extension, set_workspace_runtime_profile, set_xdebug_mode, start_workspace,
     stop_workspace, uninstall_workspace_keep_data, update_workspace_settings,
     get_laravel_environment, save_laravel_environment, provision_workspace_database,
+    get_project_capabilities, run_project_task,
 };
 use config::ConfigManager;
 use service::ServiceManager;
@@ -288,6 +289,8 @@ pub fn run() {
             get_laravel_environment,
             save_laravel_environment,
             provision_workspace_database,
+            get_project_capabilities,
+            run_project_task,
             launch_workspace_tool,
             launch_workspace_editor,
             create_workspace,

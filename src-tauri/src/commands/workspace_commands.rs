@@ -321,6 +321,22 @@ pub struct WorkspacePaths {
     pub phpmyadmin_available: bool,
 }
 
+/// Project files detected from the actual source folder. The UI uses this to
+/// show only tools that the project can genuinely run.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectCapabilities {
+    pub composer_json: bool,
+    pub composer_lock: bool,
+    pub package_json: bool,
+    pub vite_config: bool,
+    pub artisan: bool,
+    pub laravel_env: bool,
+    pub devpanel_composer_available: bool,
+    pub devpanel_node_available: bool,
+    pub devpanel_php_available: bool,
+}
+
 #[derive(Serialize)]
 pub struct RuntimeChoice {
     pub value: String,
@@ -1602,6 +1618,124 @@ pub async fn launch_heidisql(state: tauri::State<'_, AppState>) -> Result<(), St
     })
     .await
     .map_err(|error| format!("HeidiSQL launch task panicked: {error}"))?
+}
+
+#[tauri::command]
+pub async fn get_project_capabilities(
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<ProjectCapabilities, String> {
+    let workspace = state.workspace_store.lock().await.get(&id)
+        .ok_or_else(|| format!("Workspace '{id}' not found"))?;
+    let root = state.service_mgr.root().clone();
+    let www_dir = state.config.lock().await.get().www_dir.clone().unwrap_or_else(|| "www".into());
+    tokio::task::spawn_blocking(move || {
+        let project = scaffold::workspace_path(&root, &www_dir, &workspace);
+        if !project.is_dir() {
+            return Err("The project folder is missing.".into());
+        }
+        Ok(ProjectCapabilities {
+            composer_json: project.join("composer.json").is_file(),
+            composer_lock: project.join("composer.lock").is_file(),
+            package_json: project.join("package.json").is_file(),
+            vite_config: ["vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"]
+                .iter().any(|name| project.join(name).is_file()),
+            artisan: project.join("artisan").is_file(),
+            laravel_env: project.join(".env").is_file(),
+            devpanel_composer_available: scaffold::find_tool(&root, "composer", "composer.bat").is_some(),
+            devpanel_node_available: scaffold::find_tool(&root, "node", "npm.cmd").is_some(),
+            devpanel_php_available: scaffold::find_tool(&root, "php", "php.exe").is_some(),
+        })
+    }).await.map_err(|error| format!("Project inspection task panicked: {error}"))?
+}
+
+/// Executes only a reviewed command set against the selected project. No
+/// arbitrary command text comes from the UI, and every executable is looked
+/// up under DevPanel/bin rather than the global PATH.
+#[tauri::command]
+pub async fn run_project_task(
+    id: String,
+    task: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    let workspace = state.workspace_store.lock().await.get(&id)
+        .ok_or_else(|| format!("Workspace '{id}' not found"))?;
+    let root = state.service_mgr.root().clone();
+    let www_dir = state.config.lock().await.get().www_dir.clone().unwrap_or_else(|| "www".into());
+    tokio::task::spawn_blocking(move || {
+        let project = scaffold::workspace_path(&root, &www_dir, &workspace);
+        if !project.is_dir() {
+            return Err("The project folder is missing.".into());
+        }
+        let (program, args): (PathBuf, Vec<&str>) = match task.as_str() {
+            "composer_install" => (
+                scaffold::find_tool(&root, "composer", "composer.bat")
+                    .ok_or_else(|| "Composer is not installed in DevPanel/bin/composer.".to_string())?,
+                vec!["install", "--no-interaction"],
+            ),
+            "composer_update" => (
+                scaffold::find_tool(&root, "composer", "composer.bat")
+                    .ok_or_else(|| "Composer is not installed in DevPanel/bin/composer.".to_string())?,
+                vec!["update", "--no-interaction"],
+            ),
+            "npm_install" => (
+                scaffold::find_tool(&root, "node", "npm.cmd")
+                    .ok_or_else(|| "Node.js/NPM is not installed in DevPanel/bin/node. Install it from Modules first.".to_string())?,
+                vec!["install"],
+            ),
+            "npm_update" => (
+                scaffold::find_tool(&root, "node", "npm.cmd")
+                    .ok_or_else(|| "Node.js/NPM is not installed in DevPanel/bin/node. Install it from Modules first.".to_string())?,
+                vec!["update"],
+            ),
+            "artisan_migrate" => (
+                scaffold::find_tool(&root, "php", "php.exe")
+                    .ok_or_else(|| "PHP is not installed in DevPanel/bin/php.".to_string())?,
+                vec!["artisan", "migrate", "--force"],
+            ),
+            "artisan_cache_clear" => (
+                scaffold::find_tool(&root, "php", "php.exe")
+                    .ok_or_else(|| "PHP is not installed in DevPanel/bin/php.".to_string())?,
+                vec!["artisan", "optimize:clear"],
+            ),
+            "artisan_config_clear" => (
+                scaffold::find_tool(&root, "php", "php.exe")
+                    .ok_or_else(|| "PHP is not installed in DevPanel/bin/php.".to_string())?,
+                vec!["artisan", "config:clear"],
+            ),
+            "artisan_route_clear" => (
+                scaffold::find_tool(&root, "php", "php.exe")
+                    .ok_or_else(|| "PHP is not installed in DevPanel/bin/php.".to_string())?,
+                vec!["artisan", "route:clear"],
+            ),
+            "artisan_view_clear" => (
+                scaffold::find_tool(&root, "php", "php.exe")
+                    .ok_or_else(|| "PHP is not installed in DevPanel/bin/php.".to_string())?,
+                vec!["artisan", "view:clear"],
+            ),
+            _ => return Err("Unsupported project task.".into()),
+        };
+        let output = Command::new(program)
+            .args(args)
+            .current_dir(&project)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map_err(|error| format!("Could not run task: {error}"))?;
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if output.status.success() {
+            Ok(if combined.trim().is_empty() { "Task completed successfully.".into() } else { combined })
+        } else {
+            Err(if combined.trim().is_empty() {
+                format!("Task exited with status {}.", output.status)
+            } else {
+                combined
+            })
+        }
+    }).await.map_err(|error| format!("Project task panicked: {error}"))?
 }
 
 /// Starts an allow-listed developer application that is owned by DevPanel's
