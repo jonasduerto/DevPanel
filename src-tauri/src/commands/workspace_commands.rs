@@ -56,8 +56,9 @@ pub struct LaravelEnvironment {
     pub db_port: String,
     pub db_database: String,
     pub db_username: String,
-    /// Only accepted on save. It is never returned from a user's .env file.
-    #[serde(default, skip_serializing)]
+    /// DevPanel runs locally, so the workstation owner can inspect and edit
+    /// the same project password that exists in the local .env file.
+    #[serde(default)]
     pub db_password: String,
 }
 
@@ -848,6 +849,7 @@ pub async fn create_workspace(
     };
     let active_stack = active_stack(&state).await?;
     let is_wordpress = preset.as_str().eq_ignore_ascii_case("wordpress");
+    let is_laravel = preset.as_str().eq_ignore_ascii_case("laravel");
     let project_mode = options.project_mode.trim().to_ascii_lowercase();
     let external_root = if project_mode == "existing" {
         let path = PathBuf::from(options.external_root.trim());
@@ -862,7 +864,10 @@ pub async fn create_workspace(
     if PathBuf::from(&document_root).is_absolute() || document_root.split(['/', '\\']).any(|part| part == "..") {
         return Err("Document root must be a relative folder inside the project.".into());
     }
-    let requires_database = is_wordpress || options.create_database;
+    // Laravel and WordPress use the active DevPanel database by default.
+    // A project must never be scaffolded as MariaDB in DevPanel while its
+    // framework .env silently remains on the stock SQLite configuration.
+    let requires_database = is_wordpress || is_laravel || options.create_database;
 
     // WordPress is installed during creation and therefore needs a running
     // PHP/database stack. Other project types are deliberately created as
@@ -946,11 +951,15 @@ pub async fn create_workspace(
         }
     }
 
+    let database_user = format!("dp_{}", id.replace('-', "_"));
+    let database_password = format!("dp-{:x}-{:x}", SystemTime::now().duration_since(UNIX_EPOCH).map(|value| value.as_secs()).unwrap_or(0), id.len());
+    let database_engine = engine_name.clone().unwrap_or_default();
     let mut workspace = WorkspaceBuilder::new(id.clone(), name, preset, domain, db_name.clone())
         .running(services_started)
         .setup_complete(!is_wordpress)
         .runtime_profile(options.runtime_profile.clone())
         .project_setup(project_mode, external_root, document_root, requires_database)
+        .database_binding(database_engine, database_user.clone(), database_password.clone())
         .wordpress_admin(is_wordpress.then(|| WordPressAdmin {
             username: options.wordpress_admin_user.clone(),
             password: options.wordpress_admin_password.clone(),
@@ -974,8 +983,6 @@ pub async fn create_workspace(
 
     // WordPress's guided installer gets a dedicated database now. Other
     // project types can be created without forcing database provisioning.
-    let database_user = format!("dp_{}", id.replace('-', "_"));
-    let database_password = format!("dp-{:x}-{:x}", workspace.created_at, id.len());
     if let Some(engine_name) = engine_name.as_ref() {
         let root_for_db = state.service_mgr.root().clone();
         let db_name_for_db = db_name.clone();
@@ -990,6 +997,20 @@ pub async fn create_workspace(
         .map_err(|e| format!("Database task panicked: {e}"))?;
         if let Err(error) = db_result {
             warnings.push(format!("Database not created yet: {error}"));
+        }
+    }
+
+    if is_laravel && workspace.requires_database {
+        let root_for_laravel = state.service_mgr.root().clone();
+        let www_dir_for_laravel = www_dir.clone();
+        let workspace_for_laravel = workspace.clone();
+        let laravel_result = tokio::task::spawn_blocking(move || {
+            sync_laravel_env_to_binding(&root_for_laravel, &www_dir_for_laravel, &workspace_for_laravel, mysql_port)
+        })
+        .await
+        .map_err(|error| format!("Laravel environment task panicked: {error}"))?;
+        if let Err(error) = laravel_result {
+            warnings.push(format!("Laravel database binding needs attention: {error}"));
         }
     }
 
@@ -1328,6 +1349,85 @@ fn update_env_values(contents: &str, values: &[(&str, &str)]) -> String {
     format!("{}\n", output.join("\n"))
 }
 
+fn sync_laravel_env_to_binding(
+    root: &std::path::Path,
+    www_dir: &str,
+    workspace: &Workspace,
+    mysql_port: u16,
+) -> Result<(), String> {
+    let path = scaffold::workspace_path(root, www_dir, workspace).join(".env");
+    let contents = fs::read_to_string(&path)
+        .map_err(|error| format!("Could not read Laravel .env: {error}"))?;
+    let driver = if workspace.database_engine.is_empty() {
+        "mariadb"
+    } else {
+        workspace.database_engine.as_str()
+    };
+    let values = [
+        ("APP_URL", format!("http://{}", workspace.domain)),
+        ("DB_CONNECTION", driver.to_string()),
+        ("DB_HOST", "127.0.0.1".into()),
+        ("DB_PORT", mysql_port.to_string()),
+        ("DB_DATABASE", workspace.db_name.clone()),
+        ("DB_USERNAME", workspace.database_username.clone()),
+        ("DB_PASSWORD", workspace.database_password.clone()),
+    ];
+    let borrowed = values
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect::<Vec<_>>();
+    fs::write(&path, update_env_values(&contents, &borrowed))
+        .map_err(|error| format!("Could not save Laravel .env: {error}"))
+}
+
+#[tauri::command]
+pub async fn provision_workspace_database(
+    id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<Workspace, String> {
+    let mut workspace = state.workspace_store.lock().await.get(&id)
+        .ok_or_else(|| format!("Workspace '{id}' not found"))?;
+    if workspace.is_running() {
+        return Err("Stop this site before provisioning or changing its database.".into());
+    }
+    let stack = active_stack(&state).await?;
+    let engine_name = stack_database_engine(&stack)?;
+    let (ports, mysql_version, www_dir) = {
+        let config = state.config.lock().await;
+        (config.get().ports, config.get().mysql_version.clone(), config.get().www_dir.clone().unwrap_or_else(|| "www".into()))
+    };
+    state.service_mgr.refresh_services(ports, mysql_version, vec![workspace.runtime_profile.php_version.clone()]).await?;
+    if let Some(service_id) = crate::db::migration::db_service_of(&stack) {
+        state.service_mgr.start(service_id).await?;
+    }
+    let mysql_port = ports.mysql;
+    let root = state.service_mgr.root().clone();
+    let database_user = if workspace.database_username.is_empty() { format!("dp_{}", workspace.id.replace('-', "_")) } else { workspace.database_username.clone() };
+    let database_password = if workspace.database_password.is_empty() { format!("dp-{:x}-{:x}", workspace.created_at, workspace.id.len()) } else { workspace.database_password.clone() };
+    let db_name = workspace.db_name.clone();
+    let engine_for_prepare = engine_name.clone();
+    let user_for_prepare = database_user.clone();
+    let password_for_prepare = database_password.clone();
+    tokio::task::spawn_blocking(move || {
+        let engine = engine_by_name(&engine_for_prepare)?;
+        engine.wait_until_ready(&root, mysql_port)?;
+        engine.prepare_database(&root, &db_name, &user_for_prepare, &password_for_prepare)
+    }).await.map_err(|error| format!("Database provisioning task panicked: {error}"))??;
+
+    workspace.requires_database = true;
+    workspace.database_engine = engine_name;
+    workspace.database_username = database_user;
+    workspace.database_password = database_password;
+    if workspace.preset.as_str().eq_ignore_ascii_case("laravel") {
+        let root = state.service_mgr.root().clone();
+        let copy = workspace.clone();
+        tokio::task::spawn_blocking(move || sync_laravel_env_to_binding(&root, &www_dir, &copy, mysql_port))
+            .await.map_err(|error| format!("Laravel binding task panicked: {error}"))??;
+    }
+    state.workspace_store.lock().await.update(workspace.clone())?;
+    Ok(workspace)
+}
+
 #[tauri::command]
 pub async fn get_laravel_environment(
     id: String,
@@ -1349,7 +1449,7 @@ pub async fn get_laravel_environment(
             db_port: env_value(&contents, "DB_PORT", "3306"),
             db_database: env_value(&contents, "DB_DATABASE", &workspace.db_name),
             db_username: env_value(&contents, "DB_USERNAME", "root"),
-            db_password: String::new(),
+            db_password: env_value(&contents, "DB_PASSWORD", ""),
         })
     })
     .await

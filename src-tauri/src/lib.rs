@@ -54,7 +54,7 @@ use commands::workspace_commands::{
     open_xdebug_output_folder, refresh_runtime_detection, retry_database_setup,
     set_php_extension, set_workspace_runtime_profile, set_xdebug_mode, start_workspace,
     stop_workspace, uninstall_workspace_keep_data, update_workspace_settings,
-    get_laravel_environment, save_laravel_environment,
+    get_laravel_environment, save_laravel_environment, provision_workspace_database,
 };
 use config::ConfigManager;
 use service::ServiceManager;
@@ -287,6 +287,7 @@ pub fn run() {
             update_workspace_settings,
             get_laravel_environment,
             save_laravel_environment,
+            provision_workspace_database,
             launch_workspace_tool,
             launch_workspace_editor,
             create_workspace,

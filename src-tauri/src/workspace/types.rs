@@ -46,6 +46,15 @@ pub struct Workspace {
     pub preset: WorkspacePreset,
     pub domain: String,
     pub db_name: String,
+    /// Local, DevPanel-managed connection details. These are intentionally
+    /// visible to the owner of this local workstation so projects can be
+    /// repaired or migrated without hidden credentials.
+    #[serde(default)]
+    pub database_engine: String,
+    #[serde(default)]
+    pub database_username: String,
+    #[serde(default)]
+    pub database_password: String,
     /// Project setup category: custom, starter, app, or existing.
     #[serde(default = "default_project_mode")]
     pub project_mode: String,
@@ -91,6 +100,9 @@ pub struct WorkspaceBuilder {
     preset: WorkspacePreset,
     domain: String,
     db_name: String,
+    database_engine: String,
+    database_username: String,
+    database_password: String,
     project_mode: String,
     external_root: Option<String>,
     document_root: String,
@@ -118,6 +130,9 @@ impl WorkspaceBuilder {
             preset,
             domain,
             db_name,
+            database_engine: String::new(),
+            database_username: String::new(),
+            database_password: String::new(),
             project_mode: default_project_mode(),
             external_root: None,
             document_root: String::new(),
@@ -161,6 +176,18 @@ impl WorkspaceBuilder {
         self
     }
 
+    pub fn database_binding(
+        mut self,
+        engine: String,
+        username: String,
+        password: String,
+    ) -> Self {
+        self.database_engine = engine;
+        self.database_username = username;
+        self.database_password = password;
+        self
+    }
+
     pub fn wordpress_admin(mut self, admin: Option<WordPressAdmin>) -> Self {
         self.wordpress_admin = admin;
         self
@@ -173,6 +200,9 @@ impl WorkspaceBuilder {
             preset: self.preset,
             domain: self.domain,
             db_name: self.db_name,
+            database_engine: self.database_engine,
+            database_username: self.database_username,
+            database_password: self.database_password,
             project_mode: self.project_mode,
             external_root: self.external_root,
             document_root: self.document_root,

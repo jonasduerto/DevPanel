@@ -55,6 +55,7 @@
   let profileState = $state({ busy: false, error: "", operation: "" });
   let settingsState = $state({ busy: false, error: "", operation: "" });
   let laravelState = $state({ busy: false, error: "", operation: "" });
+  let showLaravelPassword = $state(false);
   let preferredEditor = $state("vscode");
 
   onMount(async () => {
@@ -217,6 +218,17 @@
     }, "Saving Laravel environment", { toastSuccess: ".env saved" });
   }
 
+  async function provisionSiteDatabase() {
+    error = "";
+    await invokeWith(settingsState, async () => {
+      await invoke("provision_workspace_database", { id: workspace.id });
+      if (isLaravelSite()) {
+        laravelEnvironment = await invoke("get_laravel_environment", { id: workspace.id });
+      }
+      await onUpdated?.();
+    }, "Synchronizing database", { toastSuccess: "Database and project configuration synchronized" });
+  }
+
   /** @param {"configuration" | "database" | "wordpress"} panel */
   async function showDetails(panel) {
     detailPanel = detailPanel === panel ? null : panel;
@@ -354,7 +366,8 @@
             <button class="btn-subtle" onclick={saveSiteSettings} disabled={settingsState.busy}>
               {settingsState.busy ? "Saving..." : "Save Site Binding"}
             </button>
-            <div class="tool-note">Changing the name updates DevPanel's binding; use Repair database afterward to create or reconnect it. Changing a domain requires Configure HTTPS again.</div>
+            <button class="btn-subtle" onclick={provisionSiteDatabase} disabled={settingsState.busy}>Initialize / Sync DevPanel Database</button>
+            <div class="tool-note">Sync creates the DevPanel database/user and aligns Laravel .env. Changing a domain requires Configure HTTPS again.</div>
           {/if}
         </div>
       {/if}
@@ -399,13 +412,16 @@
             <label class="runtime-field"><span>DB port</span><input bind:value={laravelEnvironment.db_port} disabled={workspace.running} /></label>
             <label class="runtime-field"><span>DB database</span><input bind:value={laravelEnvironment.db_database} disabled={workspace.running} /></label>
             <label class="runtime-field"><span>DB username</span><input bind:value={laravelEnvironment.db_username} disabled={workspace.running} /></label>
-            <label class="runtime-field"><span>DB password</span><input type="password" bind:value={laravelEnvironment.db_password} disabled={workspace.running} placeholder="Leave blank to keep current" /></label>
+            <label class="runtime-field"><span>DB password</span><input type={showLaravelPassword ? "text" : "password"} bind:value={laravelEnvironment.db_password} disabled={workspace.running} /></label>
           </div>
           {#if workspace.running}
             <div class="tool-note">Stop this site before editing .env values.</div>
           {:else}
             <button class="btn-subtle" onclick={saveLaravelEnvironment} disabled={laravelState.busy}>
               {laravelState.busy ? "Saving..." : "Save Laravel .env"}
+            </button>
+            <button class="btn-subtle" onclick={() => (showLaravelPassword = !showLaravelPassword)}>
+              {showLaravelPassword ? "Hide password" : "Show password"}
             </button>
           {/if}
         </div>
