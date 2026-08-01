@@ -46,6 +46,22 @@ pub struct Workspace {
     pub preset: WorkspacePreset,
     pub domain: String,
     pub db_name: String,
+    /// Project setup category: custom, starter, app, or existing.
+    #[serde(default = "default_project_mode")]
+    pub project_mode: String,
+    /// Absolute user-owned folder for an imported project. DevPanel never
+    /// deletes this folder; its own metadata remains under `www/<id>`.
+    #[serde(default)]
+    pub external_root: Option<String>,
+    /// Relative public folder inside the project root. Empty means root.
+    #[serde(default)]
+    pub document_root: String,
+    #[serde(default)]
+    pub requires_database: bool,
+    /// Runtime-only health information, computed when Sites are listed.
+    /// A missing source path never deletes the persisted site entry.
+    #[serde(default)]
+    pub path_missing: bool,
     pub created_at: u64,
     /// True once `finish_domain_setup` has issued a cert and wired the
     /// hosts entry for `domain`. Defaults to false for workspaces created
@@ -67,12 +83,19 @@ pub struct Workspace {
     pub wordpress_admin: Option<WordPressAdmin>,
 }
 
+fn default_project_mode() -> String { "app".into() }
+
 pub struct WorkspaceBuilder {
     id: String,
     name: String,
     preset: WorkspacePreset,
     domain: String,
     db_name: String,
+    project_mode: String,
+    external_root: Option<String>,
+    document_root: String,
+    requires_database: bool,
+    path_missing: bool,
     created_at: Option<u64>,
     https_ready: bool,
     running: bool,
@@ -95,6 +118,11 @@ impl WorkspaceBuilder {
             preset,
             domain,
             db_name,
+            project_mode: default_project_mode(),
+            external_root: None,
+            document_root: String::new(),
+            requires_database: false,
+            path_missing: false,
             created_at: None,
             https_ready: false,
             running: false,
@@ -119,6 +147,20 @@ impl WorkspaceBuilder {
         self
     }
 
+    pub fn project_setup(
+        mut self,
+        project_mode: String,
+        external_root: Option<String>,
+        document_root: String,
+        requires_database: bool,
+    ) -> Self {
+        self.project_mode = project_mode;
+        self.external_root = external_root;
+        self.document_root = document_root;
+        self.requires_database = requires_database;
+        self
+    }
+
     pub fn wordpress_admin(mut self, admin: Option<WordPressAdmin>) -> Self {
         self.wordpress_admin = admin;
         self
@@ -131,6 +173,11 @@ impl WorkspaceBuilder {
             preset: self.preset,
             domain: self.domain,
             db_name: self.db_name,
+            project_mode: self.project_mode,
+            external_root: self.external_root,
+            document_root: self.document_root,
+            requires_database: self.requires_database,
+            path_missing: self.path_missing,
             created_at: self.created_at.unwrap_or_else(|| {
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)

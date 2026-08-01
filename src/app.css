@@ -1,1 +1,4 @@
-@import "tailwindcss";
+/* Only DevPanel's own UI is Tailwind source. User projects under www are
+   runtime data and must not be scanned as part of the desktop app build. */
+@import "tailwindcss" source(none);
+@source "./";

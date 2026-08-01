@@ -65,7 +65,7 @@ pub async fn finish_domain_setup(
         config.get().ports.public_http_port(&active_stack)
     };
     let domain = workspace.domain.clone();
-    let ws_id = workspace.id.clone();
+    let workspace_for_setup = workspace.clone();
 
     let (warnings, https_ready) =
         tokio::task::spawn_blocking(move || -> Result<(Vec<String>, bool), String> {
@@ -73,7 +73,7 @@ pub async fn finish_domain_setup(
             let mut https_ready = true;
 
             let ca = CertificateAuthority::load_or_create(&root)?;
-            let project_dir = scaffold::project_path(&root, &www_dir, &ws_id);
+            let project_dir = scaffold::metadata_path(&root, &www_dir, &workspace_for_setup.id);
             let cert = ca.issue_cert(&domain, &project_dir.join("ssl"))?;
 
             let mut manifest = WorkspaceManifest::load(&project_dir)?;
@@ -82,7 +82,7 @@ pub async fn finish_domain_setup(
             manifest.ssl_key_file = Some(cert.key_file.to_string_lossy().into_owned());
             manifest.save(&project_dir)?;
 
-            if let Err(e) = vhost::regenerate(&root, &www_dir, &ws_id, &active_stack, http_port) {
+            if let Err(e) = vhost::regenerate(&root, &www_dir, &workspace_for_setup, &active_stack, http_port) {
                 warnings.push(format!("Vhost not regenerated: {e}"));
                 https_ready = false;
             }

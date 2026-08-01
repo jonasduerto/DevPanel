@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use crate::environment::{StackDefinition, WebRole};
 
 use super::manifest::WorkspaceManifest;
-use super::scaffold::project_path;
+use super::scaffold::{metadata_path, workspace_path};
+use super::Workspace;
 
 pub use apache::ApacheVhostRenderer;
 pub use nginx::{NginxDirectRenderer, NginxProxyRenderer};
@@ -23,6 +24,18 @@ pub(super) fn generated_vhost_path(root: &Path, engine: &str, id: &str) -> PathB
         .join("vhosts")
         .join(engine)
         .join(format!("{id}.conf"))
+}
+
+/// Apache and Nginx on Windows do not understand the Win32 extended-length
+/// prefix (`\\?\`). Rust may preserve that prefix after canonicalisation,
+/// which otherwise produces a valid-looking vhost that Apache answers with
+/// 403. Web-server configuration always needs a normal forward-slash path.
+pub(super) fn web_server_path(path: &Path) -> String {
+    let value = path.to_string_lossy().replace('\\', "/");
+    value
+        .strip_prefix("//?/")
+        .map(str::to_owned)
+        .unwrap_or(value)
 }
 
 pub trait VhostRenderer {
@@ -90,16 +103,17 @@ pub fn renderers_for_stack(
 pub fn regenerate(
     root: &Path,
     www_dir: &str,
-    workspace_id: &str,
+    workspace: &Workspace,
     stack: &StackDefinition,
     http_port: u16,
 ) -> Result<(), String> {
-    let project_dir = project_path(root, www_dir, workspace_id);
-    let manifest = WorkspaceManifest::load(&project_dir)?;
+    let metadata_dir = metadata_path(root, www_dir, &workspace.id);
+    let project_dir = workspace_path(root, www_dir, workspace);
+    let manifest = WorkspaceManifest::load(&metadata_dir)?;
 
     for (renderer, port, is_public) in renderers_for_stack(stack, http_port) {
         let rendered = renderer.render(root, &manifest, &project_dir, port, is_public);
-        let config_path = renderer.config_path(root, workspace_id);
+        let config_path = renderer.config_path(root, &workspace.id);
         if let Some(dir) = config_path.parent() {
             fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         }

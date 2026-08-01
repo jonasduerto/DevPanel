@@ -38,6 +38,21 @@ pub fn project_path(root: &Path, www_dir: &str, id: &str) -> PathBuf {
     root.join(www_dir).join(id)
 }
 
+/// DevPanel-owned directory for metadata, certificates and generated files.
+pub fn metadata_path(root: &Path, www_dir: &str, id: &str) -> PathBuf {
+    project_path(root, www_dir, id)
+}
+
+/// The actual source root. Imported folders are user-owned and must never be
+/// removed by workspace deletion; new sites use the DevPanel-owned directory.
+pub fn workspace_path(root: &Path, www_dir: &str, workspace: &Workspace) -> PathBuf {
+    workspace
+        .external_root
+        .as_deref()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| metadata_path(root, www_dir, &workspace.id))
+}
+
 /// Finds a companion CLI tool (wp-cli, composer, mysql client…) the same
 /// way services are located: DevPanel's own {root}/bin/{dir}/{binary} only.
 /// An external installation may be copied into this directory by an explicit
@@ -58,15 +73,14 @@ fn run_tool(
     label: &str,
     warnings: &mut Vec<String>,
 ) {
-    let path = match find_binary_in_bin(root, "php", "php.exe")
+    let php_dir = find_binary_in_bin(root, "php", "php.exe")
         .and_then(|p| p.parent().map(Path::to_path_buf))
-    {
-        Some(php_dir) => format!(
-            "{};{}",
-            php_dir.display(),
-            std::env::var("PATH").unwrap_or_default()
-        ),
-        None => std::env::var("PATH").unwrap_or_default(),
+        .map(|dir| dir.to_string_lossy().into_owned());
+    let composer_dir = root.join("bin/composer");
+    let inherited_path = std::env::var("PATH").unwrap_or_default();
+    let path = match php_dir {
+        Some(php_dir) => format!("{};{};{}", composer_dir.display(), php_dir, inherited_path),
+        None => format!("{};{}", composer_dir.display(), inherited_path),
     };
     let status = Command::new(bin)
         .args(args)
@@ -101,10 +115,10 @@ fn scaffold_preset(
     let mut warnings = Vec::new();
 
     match preset.as_str().to_ascii_lowercase().as_str() {
-        "empty" => {
+        "empty" | "php" => {
             fs::write(
                 project_dir.join("index.php"),
-                "<?php\n// Empty workspace scaffolded by DevPanel\n",
+                "<?php\n\ndeclare(strict_types=1);\n\necho 'Hello from DevPanel';\n",
             )
             .map_err(|e| e.to_string())?;
         }
@@ -156,6 +170,55 @@ fn scaffold_preset(
                 ),
             )?;
         }
+        "astro" => {
+            fs::create_dir_all(project_dir.join("src/pages"))
+                .map_err(|e| format!("Could not create Astro source folder: {e}"))?;
+            fs::write(
+                project_dir.join("package.json"),
+                r#"{
+  "name": "devpanel-astro-site",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview"
+  },
+  "dependencies": {
+    "astro": "^5.0.0"
+  }
+}
+"#,
+            )
+            .map_err(|e| e.to_string())?;
+            fs::write(
+                project_dir.join("astro.config.mjs"),
+                "import { defineConfig } from 'astro/config';\n\nexport default defineConfig({});\n",
+            )
+            .map_err(|e| e.to_string())?;
+            fs::write(
+                project_dir.join("src/pages/index.astro"),
+                "<html><body><h1>Astro site</h1><p>Created with DevPanel.</p></body></html>\n",
+            )
+            .map_err(|e| e.to_string())?;
+            warnings.push(
+                "Astro starter created. Run npm install, then npm run dev from the site folder. Node process hosting will be added to Sites separately."
+                    .into(),
+            );
+        }
+        "python" => {
+            fs::write(
+                project_dir.join("app.py"),
+                "from http.server import BaseHTTPRequestHandler, HTTPServer\n\n\nclass Handler(BaseHTTPRequestHandler):\n    def do_GET(self):\n        self.send_response(200)\n        self.send_header('Content-Type', 'text/html; charset=utf-8')\n        self.end_headers()\n        self.wfile.write(b'<h1>Python site</h1><p>Created with DevPanel.</p>')\n\n\nHTTPServer(('127.0.0.1', 8000), Handler).serve_forever()\n",
+            )
+            .map_err(|e| e.to_string())?;
+            fs::write(project_dir.join("requirements.txt"), "# Add Python packages here\n")
+                .map_err(|e| e.to_string())?;
+            warnings.push(
+                "Python starter created. Run python app.py from the site folder. Python process hosting will be added to Sites separately."
+                    .into(),
+            );
+        }
         custom => {
             write_notes(
                 project_dir,
@@ -180,8 +243,14 @@ pub fn provision(
     stack: Option<&StackDefinition>,
     http_port: u16,
 ) -> Result<Vec<String>, String> {
-    let project_dir = project_path(root, www_dir, &workspace.id);
-    let mut warnings = scaffold_preset(root, &project_dir, &workspace.preset)?;
+    let metadata_dir = metadata_path(root, www_dir, &workspace.id);
+    let project_dir = workspace_path(root, www_dir, workspace);
+    let mut warnings = if workspace.external_root.is_some() {
+        fs::create_dir_all(&metadata_dir).map_err(|e| format!("Could not create site metadata folder: {e}"))?;
+        Vec::new()
+    } else {
+        scaffold_preset(root, &project_dir, &workspace.preset)?
+    };
 
     let manifest = WorkspaceManifest {
         id: workspace.id.clone(),
@@ -192,16 +261,16 @@ pub fn provision(
             .php_version
             .eq_ignore_ascii_case("inherit"))
         .then(|| workspace.runtime_profile.php_version.clone()),
-        doc_root: default_doc_root(&workspace.preset).to_string(),
+        doc_root: if workspace.document_root.is_empty() { default_doc_root(&workspace.preset).to_string() } else { workspace.document_root.clone() },
         ssl_enabled: false,
         ssl_cert_file: None,
         ssl_key_file: None,
     };
-    manifest.save(&project_dir)?;
+    manifest.save(&metadata_dir)?;
 
     match stack {
         Some(stack) => {
-            if let Err(e) = vhost::regenerate(root, www_dir, &workspace.id, stack, http_port) {
+            if let Err(e) = vhost::regenerate(root, www_dir, workspace, stack, http_port) {
                 warnings.push(format!("Vhost config not written: {e}"));
             }
         }
@@ -305,7 +374,10 @@ pub fn delete_all(root: &Path, www_dir: &str, workspace: &Workspace) -> Result<(
     // just to be able to delete a broken/incomplete workspace).
     let _ = delete_data(root, workspace);
     let project_dir = project_path(root, www_dir, &workspace.id);
-    if project_dir.exists() {
+    // Imported folders are always user-owned, including the common case
+    // where the imported project already lives under DevPanel's www folder.
+    // Removing a Site must only remove DevPanel configuration, never source.
+    if workspace.external_root.is_none() && project_dir.exists() {
         fs::remove_dir_all(&project_dir)
             .map_err(|e| format!("Could not delete project folder: {e}"))?;
     }
@@ -323,7 +395,7 @@ pub fn uninstall_keep_data(
 ) -> Result<(), String> {
     delete_config(root, workspace)?;
     let project_dir = project_path(root, www_dir, &workspace.id);
-    if project_dir.exists() {
+    if workspace.external_root.is_none() && project_dir.exists() {
         fs::remove_dir_all(&project_dir)
             .map_err(|error| format!("Could not uninstall project files: {error}"))?;
     }

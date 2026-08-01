@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
+use std::os::windows::process::CommandExt;
+use std::process::Command;
 
 use tauri::State;
 
@@ -83,7 +85,24 @@ pub async fn enable_addon(
     // Phase 3: start or stop the service
     let service_id = state.addon_mgr.lock().unwrap().service_id(&addon_id);
     if enabled {
-        let _ = state.service_mgr.start(&service_id).await;
+        if let Err(error) = state.service_mgr.start(&service_id).await {
+            // Do not leave a broken module enabled. The caller receives the
+            // actionable error and can install, repair, or choose another
+            // runtime without a half-active configuration lingering behind.
+            let _ = state.service_mgr.stop(&service_id).await;
+            let mut config = state.config.lock().await;
+            let mut addon_state = config
+                .get()
+                .addons
+                .get(&addon_id)
+                .cloned()
+                .unwrap_or_default();
+            addon_state.enabled = false;
+            config.set_addon_state(addon_id.clone(), addon_state)?;
+            return Err(format!(
+                "{addon_id} could not start and was disabled safely. Repair or install the runtime, then try again. Details: {error}"
+            ));
+        }
     } else {
         let _ = state.service_mgr.stop(&service_id).await;
     }
@@ -199,4 +218,49 @@ pub fn get_addon_states(state: State<'_, AppState>) -> BTreeMap<String, AddonSta
         let config = state.config.lock().await;
         config.get().addons.clone()
     })
+}
+
+/// Installs a native Windows runtime only after the user explicitly requests
+/// it from Modules. DevPanel never invokes this during detection or startup.
+#[tauri::command]
+pub async fn install_native_addon(addon_id: String) -> Result<String, String> {
+    let package_id = match addon_id.as_str() {
+        "apache" => "Apache.HttpServer",
+        "nginx" => "Nginx.Nginx",
+        "mysql" => "Oracle.MySQL",
+        "postgres" => "PostgreSQL.PostgreSQL",
+        "php" => "PHP.PHP",
+        "node" => "OpenJS.NodeJS.LTS",
+        "python" => "Python.Python.3.13",
+        _ => return Err(format!("Native installation is not available for '{addon_id}' yet.")),
+    };
+    let package_id = package_id.to_string();
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("winget.exe")
+            .args([
+                "install",
+                "--id",
+                &package_id,
+                "--exact",
+                "--source",
+                "winget",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ])
+            .creation_flags(0x0800_0000)
+            .output()
+            .map_err(|error| format!("Could not start Windows Package Manager: {error}"))?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if output.status.success() {
+            Ok(format!("{addon_id} installed natively. Refresh Modules to detect it."))
+        } else {
+            Err(format!("Windows Package Manager could not install {addon_id}: {}", text.trim()))
+        }
+    })
+    .await
+    .map_err(|error| format!("Native install task panicked: {error}"))?
 }

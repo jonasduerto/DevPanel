@@ -64,6 +64,10 @@
     return workspace.preset?.toLowerCase() === "wordpress";
   }
 
+  function usesDatabase() {
+    return workspace.requires_database || ["wordpress", "laravel", "blesta", "whmcs"].includes(workspace.preset?.toLowerCase());
+  }
+
   function phpBadgeLabel() {
     const version = workspace.runtime_profile?.php_version;
     return version && version !== "inherit" ? `PHP ${version}` : "PHP default";
@@ -181,6 +185,12 @@
 </script>
 
 <article class="site-card" class:running={workspace.running}>
+  {#if workspace.path_missing}
+    <div class="site-missing-warning">
+      <TriangleAlert size={14} />
+      <span>Project folder is missing. DevPanel kept this Site safely; restore the folder or remove its Site entry.</span>
+    </div>
+  {/if}
   <header class="card-header">
     <div class="site-title-box">
       <div class="status-indicator">
@@ -208,7 +218,7 @@
         </div>
         <div class="menu-sep"></div>
         <div class="menu-group-label">Maintenance & diagnostics</div>
-        <button onclick={repairSite} disabled={toggleState.busy}>Repair database</button>
+        {#if usesDatabase()}<button onclick={repairSite} disabled={toggleState.busy}>Repair database</button>{/if}
         <button onclick={() => { showMenu = false; showDebug = true; }}>Diagnostics & logs</button>
         <div class="menu-sep"></div>
         <button class="danger" onclick={() => { showMenu = false; confirmDelete = true; }}>Delete site</button>
@@ -249,12 +259,12 @@
   </BusyButton>
 
   <div class="quick-actions-bar">
-    <button class="action-btn" onclick={() => runTool("site")} disabled={!workspace.setup_complete} title="Open in browser">
+    <button class="action-btn" onclick={() => runTool("site")} disabled={!workspace.setup_complete || workspace.path_missing} title="Open in browser">
       <ExternalLink size={12} />
       <span>Site</span>
     </button>
     {#if isWordPressSite()}
-      <button class="action-btn" onclick={() => runTool("admin")} disabled={!workspace.setup_complete} title="Open WP Admin">
+      <button class="action-btn" onclick={() => runTool("admin")} disabled={!workspace.setup_complete || workspace.path_missing} title="Open WP Admin">
         <KeyRound size={12} />
         <span>Admin</span>
       </button>
@@ -267,10 +277,12 @@
       <Code size={12} />
       <span>{preferredEditorLabel()}</span>
     </button>
-    <button class="action-btn" onclick={() => showDetails("database")} title="Open site database tools">
-      <Database size={12} />
-      <span>DB</span>
-    </button>
+    {#if usesDatabase()}
+      <button class="action-btn" onclick={() => showDetails("database")} title="Open site database tools">
+        <Database size={12} />
+        <span>DB</span>
+      </button>
+    {/if}
     <button class="action-btn" onclick={() => runTool("cmder")} title="Open terminal">
       <Terminal size={12} />
       <span>Shell</span>

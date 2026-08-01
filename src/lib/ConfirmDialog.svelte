@@ -13,7 +13,9 @@
   let typedText = $state("");
   let keepDatabase = $state(false);
 
-  let canConfirm = $derived(!requireTextInput || typedText === requireTextInput);
+  // Removing only the site registration/files while retaining the database is
+  // recoverable. Keep the explicit name confirmation for permanent deletion.
+  let canConfirm = $derived((showKeepDatabase && keepDatabase) || !requireTextInput || typedText === requireTextInput);
 
   function handleConfirm() {
     if (!canConfirm) return;
@@ -21,11 +23,16 @@
   }
 </script>
 
-<Modal onClose={onCancel} ariaLabel="Confirmation">
+<Modal
+  onClose={onCancel}
+  ariaLabel="Confirmation"
+  width="min(440px, calc(100vw - 32px))"
+  padding="20px"
+>
   <div class="confirm-dialog">
     <p>{message}</p>
 
-    {#if requireTextInput}
+    {#if requireTextInput && !(showKeepDatabase && keepDatabase)}
       <div class="confirm-type">
         <label for="confirm-text">Type <strong>{requireTextInput}</strong> to confirm:</label>
         <input

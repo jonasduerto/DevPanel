@@ -82,6 +82,13 @@
     await refresh();
   }
 
+  async function toggleSite(/** @type {any} */ site) {
+    await invokeWith(toolState, async () => {
+      await invoke(site.running ? "stop_workspace" : "start_workspace", { id: site.id });
+    }, site.running ? "Stopping site" : "Starting site");
+    await refresh();
+  }
+
   async function setAllServices(action) {
     const targets = visibleServices.filter((service) => action === "start" ? service.status !== "Running" : service.status === "Running");
     if (!targets.length) return;
@@ -132,127 +139,38 @@
     <InlineBanner variant="info">{toolState.error}</InlineBanner>
   {/if}
 
-  <!-- Stats Overview Banner -->
-  <div class="overview-grid">
-    <div class="stat-card">
-      <div class="stat-icon-wrapper success">
-        <Server size={18} />
-      </div>
-      <div class="stat-info">
-        <span class="stat-label">System Services</span>
-        <div class="stat-value-group">
-          <span class="stat-value">{runningServicesCount} / {totalVisibleCount}</span>
-          <span class="pill-badge" class:success={allVisibleRunning} class:warning={!allVisibleRunning}>{allVisibleRunning ? "Active" : "Stopped"}</span>
-        </div>
-      </div>
-    </div>
-
+  <div class="overview-grid dashboard-overview">
     <div class="stat-card">
       <div class="stat-icon-wrapper accent">
         <Globe size={18} />
       </div>
       <div class="stat-info">
-        <span class="stat-label">Local Web Sites</span>
+        <span class="stat-label">Your local sites</span>
         <div class="stat-value-group">
           <span class="stat-value">{runningSitesCount} / {workspaces.length}</span>
-          <span class="pill-badge accent">Running</span>
+          <span class="pill-badge" class:success={runningSitesCount > 0} class:warning={runningSitesCount === 0}>{runningSitesCount ? "Active" : "Ready to start"}</span>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- System Services Section -->
-  <section class="section">
-    <div class="section-header">
-      <div class="section-title-group">
-        <Activity size={16} class="text-accent" />
-        <h2 class="section-title">Environment Services</h2>
-      </div>
-      <div class="dashboard-actions">
-        <button class="btn-ghost btn-sm" onclick={() => setAllServices("start")} disabled={toolState.busy || allVisibleRunning || totalVisibleCount === 0}>
-          <Play size={12} fill="currentColor" />
-          <span>Start all</span>
-        </button>
-        <button class="btn-ghost btn-sm" onclick={() => setAllServices("stop")} disabled={toolState.busy || runningServicesCount === 0}>
-          <Square size={11} fill="currentColor" />
-          <span>Stop all</span>
-        </button>
-        <button class="btn-ghost btn-sm" onclick={syncHosts} disabled={toolState.busy || workspaces.length === 0} title="Synchronize local site domains to the Windows hosts file">
-          <Globe size={12} />
-          <span>Hosts sync</span>
-        </button>
-        <button class="btn-ghost btn-sm" onclick={refresh} disabled={toolState.busy}>
-          <RefreshCw size={12} class={toolState.busy ? "spin" : ""} />
-          <span>Refresh</span>
-        </button>
-      </div>
-    </div>
-
-    <div class="services-grid">
-      {#if visibleServices.length === 0}
-        <div class="empty-hint">No system services detected</div>
-      {:else}
-        {#each visibleServices as service (service.id)}
-          <ServiceCard {...service}>
-            <button
-              class="service-toggle-btn"
-              class:running={service.status === "Running"}
-              onclick={() => toggle(service.id, service.status)}
-              disabled={toolState.busy}
-              title={service.status === "Running" ? "Stop " + service.name : "Start " + service.name}
-            >
-              {#if service.status === "Running"}
-                <Square size={11} fill="currentColor" />
-              {:else}
-                <Play size={11} fill="currentColor" />
-              {/if}
-            </button>
-            <DropdownMenu label={service.name + " actions"} title={service.name + " actions"} align="right" onopen={() => loadServiceInfo(service.id)}>
-              {#if service.id === "mailpit"}
-                <button onclick={() => openUrl("http://127.0.0.1:8025")}>
-                  <ExternalLink size={13} />
-                  <span>Open Mailpit Web</span>
-                </button>
-              {:else}
-                {#if serviceInfo[service.id]?.configPaths?.main_config}
-                  <button onclick={() => openServicePath(serviceInfo[service.id].configPaths.main_config)}>Open config file</button>
-                {/if}
-                {#each serviceInfo[service.id]?.configPaths?.extra_configs ?? [] as extra}
-                  <button onclick={() => openServicePath(extra)}>Open {extra.split(/[\\/]/).pop()}</button>
-                {/each}
-                {#if serviceInfo[service.id]?.logPaths?.error_log}
-                  <button onclick={() => openServicePath(serviceInfo[service.id].logPaths.error_log)}>Open error log</button>
-                {/if}
-                {#if serviceInfo[service.id]?.logPaths?.access_log}
-                  <button onclick={() => openServicePath(serviceInfo[service.id].logPaths.access_log)}>Open access log</button>
-                {/if}
-                <div class="menu-sep"></div>
-                {#if ["apache", "nginx"].includes(service.id)}
-                  <button disabled={toolState.busy} onclick={() => runServiceControl(service.id, "test_service_config")}>Test config</button>
-                  <button disabled={toolState.busy} onclick={() => runServiceControl(service.id, "reload_service")}>Reload</button>
-                {:else if ["php", "mysql"].includes(service.id)}
-                  <button disabled={toolState.busy} onclick={() => runServiceControl(service.id, "test_service_config")}>Test config</button>
-                {/if}
-                <button disabled={toolState.busy} onclick={() => runServiceControl(service.id, "restart_service")}>Restart</button>
-              {/if}
-            </DropdownMenu>
-          </ServiceCard>
-        {/each}
-      {/if}
-    </div>
-  </section>
-
-  <!-- Quick Sites Section -->
+  <!-- Site-first dashboard. Runtime state stays in the compact app footer. -->
   <section class="section">
     <div class="section-header">
       <div class="section-title-group">
         <Globe size={16} class="text-accent" />
-        <h2 class="section-title">Sites Overview</h2>
+        <h2 class="section-title">Start a site</h2>
       </div>
-      <button class="btn-link" onclick={onNavigateToSites}>
-        <span>View all ({workspaces.length})</span>
-        <ArrowRight size={13} />
-      </button>
+      <div class="dashboard-actions">
+        <button class="btn-ghost btn-sm" onclick={refresh} disabled={toolState.busy} title="Refresh site status">
+          <RefreshCw size={12} class={toolState.busy ? "spin" : ""} />
+          <span>Refresh</span>
+        </button>
+        <button class="btn-link" onclick={onNavigateToSites}>
+          <span>Manage sites</span>
+          <ArrowRight size={13} />
+        </button>
+      </div>
     </div>
 
     {#if workspaces.length === 0 && workspacesLoaded}
@@ -267,7 +185,7 @@
       </div>
     {:else}
       <div class="sites-summary-list">
-        {#each workspaces.slice(0, 3) as ws (ws.id)}
+        {#each workspaces.slice(0, 5) as ws (ws.id)}
           <div class="summary-site-item">
             <div class="status-dot-wrapper">
               <span class="status-dot" class:running={ws.running}></span>
@@ -279,6 +197,9 @@
             <div class="site-meta-badge">
               <span class="pill-badge {ws.preset?.toLowerCase() === 'wordpress' ? 'pink' : ws.preset?.toLowerCase() === 'node' ? 'sky' : 'purple'}">{ws.preset}</span>
             </div>
+            <button class:running={ws.running} class="site-summary-toggle" onclick={() => toggleSite(ws)} disabled={toolState.busy}>
+              {#if ws.running}<Square size={11} fill="currentColor" /><span>Stop</span>{:else}<Play size={11} fill="currentColor" /><span>Start</span>{/if}
+            </button>
           </div>
         {/each}
       </div>

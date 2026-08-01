@@ -15,7 +15,7 @@ pub struct WorkspaceManifest {
     pub preset: WorkspacePreset,
     pub php_version: Option<String>,
     /// Relative to the project folder — e.g. "public" for Laravel, "" for
-    /// WordPress/Empty (served from the project root).
+    /// WordPress/PHP/other starter sites (served from the project root).
     pub doc_root: String,
     pub ssl_enabled: bool,
     /// Absolute paths to the leaf cert/key issued by the local CA, set

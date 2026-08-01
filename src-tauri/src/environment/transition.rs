@@ -19,7 +19,7 @@ pub fn on_stack_changed(
 ) -> Vec<String> {
     let mut warnings = Vec::new();
     for workspace in workspaces {
-        if let Err(e) = vhost::regenerate(root, www_dir, &workspace.id, new_stack, http_port) {
+        if let Err(e) = vhost::regenerate(root, www_dir, workspace, new_stack, http_port) {
             warnings.push(format!("{}: {e}", workspace.id));
         }
     }

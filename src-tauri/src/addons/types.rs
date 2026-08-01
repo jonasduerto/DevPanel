@@ -41,8 +41,17 @@ impl Default for AddonState {
 pub struct AddonInventoryItem {
     pub definition: AddonDefinition,
     pub state: AddonState,
+    pub external_installations: Vec<ExternalInstallation>,
     pub available: bool,
     pub running: bool,
+}
+
+/// A read-only installation discovered outside DevPanel's own `bin/` tree.
+/// DevPanel never modifies or removes these binaries automatically.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExternalInstallation {
+    pub path: String,
+    pub version: Option<String>,
 }
 
 /// Warning returned when an enable/disable action triggers side effects.

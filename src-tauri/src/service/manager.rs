@@ -766,6 +766,53 @@ pub fn find_binary_in_bin(root: &Path, id: &str, name: &str) -> Option<PathBuf> 
     })
 }
 
+/// Read-only discovery of tools supplied by Windows, package managers, or
+/// other local-server products. It intentionally stays separate from
+/// `find_binary_in_bin`: detecting an external runtime must never make
+/// DevPanel overwrite or manage somebody else's installation.
+pub fn find_external_installations(executable: &str) -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Ok(output) = std::process::Command::new("where.exe").arg(executable).output() {
+        if output.status.success() {
+            paths.extend(
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .filter(|entry| !entry.is_empty())
+                    .map(PathBuf::from)
+                    .filter(|path| path.is_file()),
+            );
+        }
+    }
+
+    // Common local-server locations are checked directly, never by crawling
+    // the drive. Versioned Laragon folders remain discoverable through PATH.
+    let drive = std::env::var("SystemDrive").unwrap_or_else(|_| "C:".into());
+    let extra = match executable.to_ascii_lowercase().as_str() {
+        "php.exe" => vec![format!("{drive}\\xampp\\php\\php.exe")],
+        "httpd.exe" => vec![
+            format!("{drive}\\xampp\\apache\\bin\\httpd.exe"),
+            format!("{drive}\\Apache24\\bin\\httpd.exe"),
+        ],
+        "mysqld.exe" => vec![format!("{drive}\\xampp\\mysql\\bin\\mysqld.exe")],
+        _ => vec![],
+    };
+    paths.extend(extra.into_iter().map(PathBuf::from).filter(|path| path.is_file()));
+    paths.sort();
+    paths.dedup();
+    paths
+}
+
+pub fn binary_version(path: &Path) -> Option<String> {
+    let output = std::process::Command::new(path).arg("--version").output().ok()?;
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    text.lines().next().map(str::trim).filter(|line| !line.is_empty()).map(str::to_owned)
+}
+
 /// Portable root resolution:
 /// - dev: exe lives at {root}/src-tauri/target/{profile}/devpanel.exe,
 ///   so walk up looking for a src-tauri/ sibling

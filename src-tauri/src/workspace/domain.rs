@@ -85,7 +85,7 @@ pub fn rename_all(
         }
 
         if let Some(stack) = stack {
-            if let Err(e) = vhost::regenerate(root, www_dir, &ws.id, stack, http_port) {
+            if let Err(e) = vhost::regenerate(root, www_dir, ws, stack, http_port) {
                 warnings.push(format!("{}: vhost not regenerated: {e}", ws.id));
             }
         }

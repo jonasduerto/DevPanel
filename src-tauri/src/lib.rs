@@ -9,8 +9,8 @@ mod state;
 mod workspace;
 
 use commands::addon_commands::{
-    enable_addon, get_addon_states, list_addons, restart_addon, set_addon_dashboard_visibility,
-    start_addon, stop_addon,
+    enable_addon, get_addon_states, install_native_addon, list_addons, restart_addon,
+    set_addon_dashboard_visibility, start_addon, stop_addon,
 };
 use commands::config_commands::{
     check_port_availability, enable_long_paths, get_config, get_long_paths_enabled, set_ports,
@@ -47,6 +47,7 @@ use commands::stack_commands::{
 use commands::update_commands::check_for_update;
 use commands::workspace_commands::{
     create_workspace, delete_workspace_all, delete_workspace_config, delete_workspace_data,
+    discover_workspace_folders,
     get_php_extensions, get_runtime_catalog, get_site_presets, get_workspace_paths,
     get_xdebug_mode, install_xdebug, launch_heidisql, launch_workspace_editor,
     launch_workspace_tool, list_workspaces, list_xdebug_output, open_workspace_folder,
@@ -273,6 +274,7 @@ pub fn run() {
             start_stack,
             stop_stack,
             list_workspaces,
+            discover_workspace_folders,
             get_workspace_paths,
             get_runtime_catalog,
             refresh_runtime_detection,
@@ -349,6 +351,7 @@ pub fn run() {
             read_service_log,
             graceful_restart_service,
             list_addons,
+            install_native_addon,
             enable_addon,
             set_addon_dashboard_visibility,
             get_addon_states,

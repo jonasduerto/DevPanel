@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::templates;
+use super::{templates, web_server_path};
 use super::VhostRenderer;
 use crate::workspace::manifest::WorkspaceManifest;
 
@@ -25,7 +25,7 @@ impl VhostRenderer for ApacheVhostRenderer {
             project_dir.join(&manifest.doc_root)
         };
         let domain = &manifest.domain;
-        let doc_root_str = doc_root.display().to_string();
+        let doc_root_str = web_server_path(&doc_root);
         let listen_port_str = listen_port.to_string();
 
         let template = templates::load(root, "apache.conf.tpl", DEFAULT_VHOST);

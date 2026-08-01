@@ -22,9 +22,26 @@ pub struct CreateWorkspaceResult {
     pub warnings: Vec<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoveredWorkspaceFolder {
+    pub name: String,
+    pub path: String,
+    pub suggested_preset: String,
+    pub suggested_document_root: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CreateSiteOptions {
+    #[serde(default = "default_project_mode")]
+    pub project_mode: String,
+    #[serde(default)]
+    pub external_root: String,
+    #[serde(default)]
+    pub document_root: String,
+    #[serde(default)]
+    pub create_database: bool,
     #[serde(default = "default_wordpress_version")]
     pub wordpress_version: String,
     #[serde(default)]
@@ -37,12 +54,18 @@ pub struct CreateSiteOptions {
     pub runtime_profile: SiteRuntimeProfile,
 }
 
+fn default_project_mode() -> String { "app".into() }
+
 fn default_wordpress_version() -> String {
     "latest".into()
 }
 
 fn wordpress_options(options: Option<CreateSiteOptions>) -> CreateSiteOptions {
     options.unwrap_or(CreateSiteOptions {
+        project_mode: default_project_mode(),
+        external_root: String::new(),
+        document_root: String::new(),
+        create_database: false,
         wordpress_version: default_wordpress_version(),
         wordpress_admin_user: String::new(),
         wordpress_admin_password: String::new(),
@@ -716,8 +739,59 @@ pub async fn get_site_presets(
 
 #[tauri::command]
 pub async fn list_workspaces(state: tauri::State<'_, AppState>) -> Result<Vec<Workspace>, String> {
+    let root = state.service_mgr.root().clone();
+    let www_dir = {
+        let config = state.config.lock().await;
+        config.get().www_dir.clone().unwrap_or_else(|| "www".into())
+    };
     let store = state.workspace_store.lock().await;
-    Ok(store.list())
+    Ok(store.list().into_iter().map(|mut workspace| {
+        workspace.path_missing = !scaffold::workspace_path(&root, &www_dir, &workspace).is_dir();
+        workspace
+    }).collect())
+}
+
+/// Finds direct folders under DevPanel's www directory that do not yet have a
+/// Site record. This is read-only: registering a project remains an explicit
+/// user action so a random folder is never given a domain or vhost silently.
+#[tauri::command]
+pub async fn discover_workspace_folders(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<DiscoveredWorkspaceFolder>, String> {
+    let root = state.service_mgr.root().clone();
+    let www_dir = {
+        let config = state.config.lock().await;
+        config.get().www_dir.clone().unwrap_or_else(|| "www".into())
+    };
+    let registered = {
+        let store = state.workspace_store.lock().await;
+        store.list().into_iter().map(|workspace| workspace.id).collect::<std::collections::HashSet<_>>()
+    };
+    let base = root.join(www_dir);
+    if !base.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut folders = Vec::new();
+    for entry in fs::read_dir(&base).map_err(|error| format!("Could not inspect www folder: {error}"))? {
+        let entry = entry.map_err(|error| format!("Could not read www folder entry: {error}"))?;
+        if !entry.file_type().map_err(|error| error.to_string())?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if registered.contains(&name) {
+            continue;
+        }
+        let path = entry.path();
+        let is_laravel = path.join("artisan").is_file() && path.join("composer.json").is_file();
+        folders.push(DiscoveredWorkspaceFolder {
+            name,
+            path: path.to_string_lossy().into_owned(),
+            suggested_preset: if is_laravel { "laravel".into() } else { "php".into() },
+            suggested_document_root: if path.join("public").is_dir() { "public".into() } else { String::new() },
+        });
+    }
+    folders.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(folders)
 }
 
 #[tauri::command]
@@ -743,10 +817,27 @@ pub async fn create_workspace(
         config.get().www_dir.clone().unwrap_or_else(|| "www".into())
     };
     let active_stack = active_stack(&state).await?;
+    let is_wordpress = preset.as_str().eq_ignore_ascii_case("wordpress");
+    let project_mode = options.project_mode.trim().to_ascii_lowercase();
+    let external_root = if project_mode == "existing" {
+        let path = PathBuf::from(options.external_root.trim());
+        if !path.is_dir() {
+            return Err("Choose an existing local folder before creating this site.".into());
+        }
+        Some(path.canonicalize().map_err(|error| format!("Could not read existing folder: {error}"))?.to_string_lossy().into_owned())
+    } else {
+        None
+    };
+    let document_root = options.document_root.trim().trim_matches(['/', '\\']).to_string();
+    if PathBuf::from(&document_root).is_absolute() || document_root.split(['/', '\\']).any(|part| part == "..") {
+        return Err("Document root must be a relative folder inside the project.".into());
+    }
+    let requires_database = is_wordpress || options.create_database;
 
-    // Include this not-yet-persisted site's requested PHP pool before
-    // starting services, otherwise its Nginx vhost could point at a pool
-    // that was never discovered.
+    // WordPress is installed during creation and therefore needs a running
+    // PHP/database stack. Other project types are deliberately created as
+    // stopped sites: choosing a project must not fail just because an
+    // unrelated runtime module is not installed or running yet.
     let (ports, mysql_version) = {
         let config = state.config.lock().await;
         (config.get().ports, config.get().mysql_version.clone())
@@ -763,21 +854,25 @@ pub async fn create_workspace(
     if options.runtime_profile.php_version != "inherit" {
         php_versions.push(options.runtime_profile.php_version.clone());
     }
-    state
-        .service_mgr
-        .refresh_services(ports, mysql_version, php_versions)
-        .await?;
+    if requires_database {
+        state
+            .service_mgr
+            .refresh_services(ports, mysql_version, php_versions)
+            .await?;
 
-    for service_id in workspace_service_ids(&active_stack, &options.runtime_profile.php_version) {
-        state.service_mgr.start(&service_id).await.map_err(|error| {
-            format!(
-                "{service_id} could not start. Check that its binary is installed and no other program is using its port.\nDetails: {error}"
-            )
-        })?;
+        for service_id in workspace_service_ids(&active_stack, &options.runtime_profile.php_version, true) {
+            state.service_mgr.start(&service_id).await.map_err(|error| {
+                format!(
+                    "{service_id} could not start. Check that its binary is installed and no other program is using its port.\nDetails: {error}"
+                )
+            })?;
+        }
     }
 
-    // Engine-based readiness + DB prep — no if/else on engine type.
-    let engine_name = stack_database_engine(&active_stack)?;
+    // A database is required immediately only for WordPress's guided
+    // installer. Commercial packages and custom apps can be created first,
+    // then configured when their files and modules are ready.
+    let engine_name = requires_database.then(|| stack_database_engine(&active_stack)).transpose()?;
     let (http_port, mysql_port) = {
         let config = state.config.lock().await;
         (
@@ -785,16 +880,18 @@ pub async fn create_workspace(
             config.get().ports.mysql,
         )
     };
-    let root_for_clone = state.service_mgr.root().clone();
-    let engine_name_clone = engine_name.clone();
-    tokio::task::spawn_blocking(move || {
-        let engine = engine_by_name(&engine_name_clone)?;
-        engine.wait_until_ready(&root_for_clone, mysql_port)
-    })
-    .await
-    .map_err(|e| format!("Engine readiness check panicked: {e}"))??;
+    if let Some(engine_name) = engine_name.as_ref() {
+        let root_for_clone = state.service_mgr.root().clone();
+        let engine_name_clone = engine_name.clone();
+        tokio::task::spawn_blocking(move || {
+            let engine = engine_by_name(&engine_name_clone)?;
+            engine.wait_until_ready(&root_for_clone, mysql_port)
+        })
+        .await
+        .map_err(|e| format!("Engine readiness check panicked: {e}"))??;
+    }
 
-    let services_started = true;
+    let services_started = is_wordpress;
     let active_stack = Some(active_stack);
 
     let (tld,) = {
@@ -803,7 +900,6 @@ pub async fn create_workspace(
     };
     let db_name = id.replace('-', "_");
     let domain = format!("{id}{tld}");
-    let is_wordpress = preset.as_str().eq_ignore_ascii_case("wordpress");
     if is_wordpress {
         if options.wordpress_admin_user.trim().is_empty() {
             options.wordpress_admin_user = "admin".into();
@@ -824,6 +920,7 @@ pub async fn create_workspace(
         .running(services_started)
         .setup_complete(!is_wordpress)
         .runtime_profile(options.runtime_profile.clone())
+        .project_setup(project_mode, external_root, document_root, requires_database)
         .wordpress_admin(is_wordpress.then(|| WordPressAdmin {
             username: options.wordpress_admin_user.clone(),
             password: options.wordpress_admin_password.clone(),
@@ -845,10 +942,11 @@ pub async fn create_workspace(
     .await
     .map_err(|e| format!("Scaffolding task panicked: {e}"))??;
 
-    // Every engine handles its own DB prep internally.
+    // WordPress's guided installer gets a dedicated database now. Other
+    // project types can be created without forcing database provisioning.
     let database_user = format!("dp_{}", id.replace('-', "_"));
     let database_password = format!("dp-{:x}-{:x}", workspace.created_at, id.len());
-    {
+    if let Some(engine_name) = engine_name.as_ref() {
         let root_for_db = state.service_mgr.root().clone();
         let db_name_for_db = db_name.clone();
         let db_user = database_user.clone();
@@ -871,7 +969,7 @@ pub async fn create_workspace(
         let project_dir = scaffold::project_path(&root_for_wp, &www_dir, &workspace.id);
         let workspace_for_wp = workspace.clone();
         let options_for_wp = options.clone();
-        let engine_name = engine_name.clone();
+        let engine_name = engine_name.expect("WordPress creation requires a database engine");
         let wp_result = tokio::task::spawn_blocking(move || {
             let engine = engine_by_name(&engine_name)?;
             install_wordpress(
@@ -1036,18 +1134,18 @@ pub async fn set_workspace_runtime_profile(
     };
     let workspace_for_manifest = workspace.clone();
     tokio::task::spawn_blocking(move || {
-        let project_dir = scaffold::project_path(&root, &www_dir, &workspace_for_manifest.id);
-        let mut manifest = crate::workspace::manifest::WorkspaceManifest::load(&project_dir)?;
+        let metadata_dir = scaffold::metadata_path(&root, &www_dir, &workspace_for_manifest.id);
+        let mut manifest = crate::workspace::manifest::WorkspaceManifest::load(&metadata_dir)?;
         manifest.php_version = (!workspace_for_manifest
             .runtime_profile
             .php_version
             .eq_ignore_ascii_case("inherit"))
         .then(|| workspace_for_manifest.runtime_profile.php_version.clone());
-        manifest.save(&project_dir)?;
+        manifest.save(&metadata_dir)?;
         crate::workspace::vhost::regenerate(
             &root,
             &www_dir,
-            &workspace_for_manifest.id,
+            &workspace_for_manifest,
             &stack,
             http_port,
         )
@@ -1068,6 +1166,16 @@ pub async fn get_workspace_paths(
             .get(&id)
             .ok_or_else(|| format!("Workspace '{id}' not found"))?
     };
+    let www_dir = {
+        let config = state.config.lock().await;
+        config.get().www_dir.clone().unwrap_or_else(|| "www".into())
+    };
+    if !scaffold::workspace_path(state.service_mgr.root(), &www_dir, &workspace).is_dir() {
+        return Err(
+            "The project folder is missing. DevPanel did not remove the Site record; restore the folder or remove this Site from Sites first."
+                .into(),
+        );
+    }
     let root = state.service_mgr.root().clone();
     let www_dir = {
         let config = state.config.lock().await;
@@ -1077,7 +1185,7 @@ pub async fn get_workspace_paths(
         .ok()
         .map(|path| path.to_string_lossy().into_owned());
 
-    let site_path = scaffold::project_path(&root, &www_dir, &workspace.id);
+    let site_path = scaffold::workspace_path(&root, &www_dir, &workspace);
     let find_first = |paths: Vec<PathBuf>| {
         paths
             .into_iter()
@@ -1155,7 +1263,7 @@ pub async fn launch_workspace_tool(
         let config = state.config.lock().await;
         config.get().www_dir.clone().unwrap_or_else(|| "www".into())
     };
-    let site_path = scaffold::project_path(&root, &www_dir, &workspace.id);
+    let site_path = scaffold::workspace_path(&root, &www_dir, &workspace);
 
     tokio::task::spawn_blocking(move || {
         let mut command = match tool.as_str() {
@@ -1209,7 +1317,7 @@ pub async fn launch_workspace_editor(
             .clone()
             .unwrap_or_else(|| "www".into())
     };
-    let site_path = scaffold::project_path(state.service_mgr.root(), &www_dir, &workspace.id);
+    let site_path = scaffold::workspace_path(state.service_mgr.root(), &www_dir, &workspace);
     let command = match editor.as_str() {
         "vscode" => "code",
         "cursor" => "cursor",
@@ -1254,10 +1362,23 @@ fn stack_database_engine(stack: &environment::StackDefinition) -> Result<String,
         })
 }
 
-fn workspace_service_ids(stack: &environment::StackDefinition, php_version: &str) -> Vec<String> {
+fn preset_requires_database(preset: &WorkspacePreset) -> bool {
+    matches!(
+        preset.as_str().to_ascii_lowercase().as_str(),
+        "wordpress" | "laravel" | "blesta" | "whmcs"
+    )
+}
+
+fn workspace_service_ids(
+    stack: &environment::StackDefinition,
+    php_version: &str,
+    requires_database: bool,
+) -> Vec<String> {
+    let database_service = crate::db::migration::db_service_of(stack);
     stack
         .services
         .iter()
+        .filter(|service_id| requires_database || Some(service_id.as_str()) != database_service)
         .map(|service_id| {
             if service_id == "php" {
                 crate::service::php_service_id(php_version)
@@ -1293,6 +1414,16 @@ pub async fn start_workspace(
             .get(&id)
             .ok_or_else(|| format!("Workspace '{id}' not found"))?
     };
+    let configured_www_dir = {
+        let config = state.config.lock().await;
+        config.get().www_dir.clone().unwrap_or_else(|| "www".into())
+    };
+    if !scaffold::workspace_path(state.service_mgr.root(), &configured_www_dir, &workspace).is_dir() {
+        return Err(
+            "The project folder is missing. DevPanel did not remove the Site record; restore the folder or remove this Site from Sites first."
+                .into(),
+        );
+    }
 
     let profile = &workspace.runtime_profile;
     if profile.php_version != "inherit"
@@ -1340,7 +1471,11 @@ pub async fn start_workspace(
 
     // Phase 1 — start every service with timeout + polling.
     let mut started_ids: Vec<String> = Vec::new();
-    let services = workspace_service_ids(&stack, &workspace.runtime_profile.php_version);
+    let services = workspace_service_ids(
+        &stack,
+        &workspace.runtime_profile.php_version,
+        workspace.requires_database || preset_requires_database(&workspace.preset),
+    );
     for service_id in &services {
         let sid = service_id.clone();
         let result = tokio::time::timeout(SERVICE_START_TIMEOUT, async {
@@ -1532,7 +1667,7 @@ pub async fn open_workspace_folder(
         let config = state.config.lock().await;
         config.get().www_dir.clone().unwrap_or_else(|| "www".into())
     };
-    let path = scaffold::project_path(&root, &www_dir, &workspace.id);
+    let path = scaffold::workspace_path(&root, &www_dir, &workspace);
     if !path.is_dir() {
         return Err(format!(
             "Workspace folder does not exist: {}",

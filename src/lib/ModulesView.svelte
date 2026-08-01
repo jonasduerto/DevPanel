@@ -51,6 +51,7 @@
   // Live process control (start/stop/restart) per module
   /** @type {Record<string, boolean>} */
   let actionBusy = $state({});
+  let nativeInstallBusy = $state({});
   let mailpitUrl = $state("http://127.0.0.1:8025");
 
   // MySQL-specific tools (root password, create DB+user, backups, version)
@@ -107,6 +108,23 @@
       error = String(e);
     }
     actionBusy[id] = false;
+  }
+
+  function supportsNativeInstall(id) {
+    return ["apache", "nginx", "mysql", "postgres", "php", "node", "python"].includes(id);
+  }
+
+  async function installNative(addon) {
+    const id = addon.definition.id;
+    nativeInstallBusy[id] = true;
+    error = "";
+    try {
+      successMsg = await invoke("install_native_addon", { addonId: id });
+      await loadData();
+    } catch (e) {
+      error = String(e);
+    }
+    nativeInstallBusy[id] = false;
   }
 
   async function runMysqlTool(/** @type {string} */ action) {
@@ -829,31 +847,52 @@
     {#if uninstalledModules.length > 0}
       <div class="section-title-wrapper mt-6">
         <PackagePlus size={16} class="text-warning" />
-        <h3 class="group-section-title">Available / Not Installed Modules</h3>
+        <h3 class="group-section-title">Not managed by DevPanel</h3>
       </div>
 
       <div class="uninstalled-grid">
         {#each uninstalledModules as addon (addon.definition.id)}
           {@const installInfo = getInstallGuidance(addon.definition.id)}
+          {@const externalInstallations = addon.external_installations ?? []}
           <div class="module-card uninstalled">
             <div class="card-top">
               <div class="card-info">
                 <div class="card-name-row">
                   <h4 class="module-name">{addon.definition.name}</h4>
-                  <span class="pill-badge warning">Not installed</span>
+                  <span class="pill-badge" class:success={externalInstallations.length > 0} class:warning={externalInstallations.length === 0}>{externalInstallations.length ? "Detected in Windows" : "Not installed"}</span>
                 </div>
                 <p class="module-desc">{addon.definition.description}</p>
               </div>
             </div>
 
-            <div class="installation-box">
-              <div class="install-header">
-                <Folder size={13} />
-                <span>Binary Installation Folder:</span>
+            {#if externalInstallations.length}
+              <div class="installation-box external-runtime-box">
+                <div class="install-header">
+                  <Check size={13} />
+                  <span>External installation found</span>
+                </div>
+                {#each externalInstallations as installation (installation.path)}
+                  <code class="install-path">{installation.path}</code>
+                  {#if installation.version}<p class="install-tip">{installation.version}</p>{/if}
+                {/each}
+                <p class="install-tip">Detected only. DevPanel will not change, stop, or remove an external installation. Add a managed runtime only if you want DevPanel to own its configuration.</p>
               </div>
-              <code class="install-path">{installInfo.path}</code>
-              <p class="install-tip">{installInfo.tip}</p>
-            </div>
+            {:else}
+              <div class="installation-box">
+                <div class="install-header">
+                  <Folder size={13} />
+                  <span>Optional managed installation folder:</span>
+                </div>
+                <code class="install-path">{installInfo.path}</code>
+                <p class="install-tip">{installInfo.tip}</p>
+                {#if supportsNativeInstall(addon.definition.id)}
+                  <button class="btn-secondary btn-xs" onclick={() => installNative(addon)} disabled={nativeInstallBusy[addon.definition.id]}>
+                    <PackagePlus size={12} />
+                    <span>{nativeInstallBusy[addon.definition.id] ? "Installing with Windows Package Manager..." : "Install natively with Windows Package Manager"}</span>
+                  </button>
+                {/if}
+              </div>
+            {/if}
           </div>
         {/each}
       </div>
@@ -869,4 +908,3 @@
     onConfirm={() => { const a = mysqlPending; mysqlPending = null; runMysqlTool(a); }}
   />
 {/if}
-

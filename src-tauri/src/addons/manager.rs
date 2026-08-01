@@ -38,6 +38,7 @@ impl AddonManager {
             .map(|def| {
                 let addon_state = state.get(&def.id).cloned().unwrap_or_default();
                 let available = Self::is_available(service_mgr, &def.id);
+                let external_installations = Self::external_installations(&def.id);
                 let running = service_statuses
                     .get(&def.id)
                     .map(|s| matches!(s, ServiceStatus::Running))
@@ -45,6 +46,7 @@ impl AddonManager {
                 AddonInventoryItem {
                     definition: def.clone(),
                     state: addon_state,
+                    external_installations,
                     available,
                     running,
                 }
@@ -155,6 +157,28 @@ impl AddonManager {
             "mailpit" => service_mgr.find_binary("sendmail", "mailpit.exe").is_some(),
             _ => false,
         }
+    }
+
+    fn external_installations(id: &str) -> Vec<ExternalInstallation> {
+        let executable = match id {
+            "apache" => "httpd.exe",
+            "nginx" => "nginx.exe",
+            "mysql" => "mysqld.exe",
+            "postgres" => "postgres.exe",
+            "php" => "php.exe",
+            "node" => "node.exe",
+            "python" => "python.exe",
+            "redis" => "redis-server.exe",
+            "mailpit" => "mailpit.exe",
+            _ => return vec![],
+        };
+        crate::service::find_external_installations(executable)
+            .into_iter()
+            .map(|path| ExternalInstallation {
+                version: crate::service::binary_version(&path),
+                path: path.to_string_lossy().into_owned(),
+            })
+            .collect()
     }
 
     /// Migrate from the legacy `active_stack_id` to the addon model.
