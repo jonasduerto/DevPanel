@@ -1377,7 +1377,28 @@ fn sync_laravel_env_to_binding(
         .map(|(key, value)| (*key, value.as_str()))
         .collect::<Vec<_>>();
     fs::write(&path, update_env_values(&contents, &borrowed))
-        .map_err(|error| format!("Could not save Laravel .env: {error}"))
+        .map_err(|error| format!("Could not save Laravel .env: {error}"))?;
+
+    // Laravel's stock configuration stores sessions/cache/jobs in the
+    // database. Create its tables immediately so a correct DB connection
+    // does not simply turn into the next \"sessions table is missing\" error.
+    let php = scaffold::find_tool(root, "php", "php.exe")
+        .ok_or_else(|| "DevPanel PHP runtime is not installed.".to_string())?;
+    let project_dir = scaffold::workspace_path(root, www_dir, workspace);
+    let output = Command::new(php)
+        .args(["artisan", "migrate", "--force"])
+        .current_dir(&project_dir)
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|error| format!("Could not run Laravel migrations: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "Laravel migrations failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
 }
 
 #[tauri::command]
