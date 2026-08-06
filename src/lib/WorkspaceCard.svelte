@@ -285,10 +285,10 @@
   }
 
   // Vite/npm/composer color their terminal output with ANSI escape codes,
-  // which are meaningless raw text once dumped into a plain <pre> — strip
-  // them so the log reads as plain text instead of "␛[32m␛[1mVITE␛[22m".
+  // which are meaningless raw text once dumped into a plain <pre> -- strip
+  // them so the log reads as plain text instead of raw color codes.
   // eslint-disable-next-line no-control-regex
-  const ANSI_PATTERN = /[][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+  const ANSI_PATTERN = new RegExp(String.fromCharCode(27) + "\[[0-9;]*[a-zA-Z]", "g");
   /** @param {string} text */
   function stripAnsi(text) {
     return text.replace(ANSI_PATTERN, "");
