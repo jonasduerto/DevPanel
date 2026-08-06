@@ -284,6 +284,16 @@
     return (caps?.composerScripts || []).filter((s) => !isComposerHook(s.name) && !dev.has(s.name));
   }
 
+  // Vite/npm/composer color their terminal output with ANSI escape codes,
+  // which are meaningless raw text once dumped into a plain <pre> — strip
+  // them so the log reads as plain text instead of "␛[32m␛[1mVITE␛[22m".
+  // eslint-disable-next-line no-control-regex
+  const ANSI_PATTERN = /[][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
+  /** @param {string} text */
+  function stripAnsi(text) {
+    return text.replace(ANSI_PATTERN, "");
+  }
+
   /** @param {"js" | "composer" | "artisan"} source @param {string} script */
   async function startProjectScript(source, script) {
     error = "";
@@ -293,7 +303,8 @@
       const outputEvent = `project-script-output::${workspace.id}::${source}::${script}`;
       const exitEvent = `project-script-exit::${workspace.id}::${source}::${script}`;
       const unlistenOutput = await listen(outputEvent, (event) => {
-        scriptOutputs = { ...scriptOutputs, [key]: `${scriptOutputs[key] || ""}${event.payload}\n` };
+        const line = stripAnsi(String(event.payload));
+        scriptOutputs = { ...scriptOutputs, [key]: `${scriptOutputs[key] || ""}${line}\n` };
       });
       const unlistenExit = await listen(exitEvent, () => {
         const next = new Set(runningScripts);
