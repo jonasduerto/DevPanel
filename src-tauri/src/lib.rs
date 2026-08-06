@@ -47,7 +47,7 @@ use commands::stack_commands::{
 use commands::update_commands::check_for_update;
 use commands::workspace_commands::{
     create_workspace, delete_workspace_all, delete_workspace_config, delete_workspace_data,
-    discover_workspace_folders,
+    discover_workspace_folders, get_available_editors,
     get_php_extensions, get_runtime_catalog, get_site_presets, get_workspace_paths,
     get_xdebug_mode, install_xdebug, launch_heidisql, launch_workspace_editor,
     launch_workspace_tool, list_workspaces, list_xdebug_output, open_workspace_folder,
@@ -55,7 +55,7 @@ use commands::workspace_commands::{
     set_php_extension, set_workspace_runtime_profile, set_xdebug_mode, start_workspace,
     stop_workspace, uninstall_workspace_keep_data, update_workspace_settings,
     get_laravel_environment, save_laravel_environment, provision_workspace_database,
-    get_project_capabilities, run_project_task,
+    get_project_capabilities, run_project_task, start_project_script, stop_project_script,
 };
 use config::ConfigManager;
 use service::ServiceManager;
@@ -122,6 +122,9 @@ pub fn run() {
     run_hosts_op_if_requested();
 
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_window(app);
+        }))
         .plugin(
             tauri_plugin_log::Builder::new()
                 .level(tauri_plugin_log::log::LevelFilter::Debug)
@@ -291,8 +294,11 @@ pub fn run() {
             provision_workspace_database,
             get_project_capabilities,
             run_project_task,
+            start_project_script,
+            stop_project_script,
             launch_workspace_tool,
             launch_workspace_editor,
+            get_available_editors,
             create_workspace,
             retry_database_setup,
             start_workspace,
@@ -383,6 +389,12 @@ pub fn run() {
             // Graceful stop (mysqladmin/httpd -k stop) then force-kill by
             // tracked PID — only touches processes DevPanel actually spawned.
             let state = app_handle.state::<AppState>();
+            tauri::async_runtime::block_on(async {
+                let mut running = state.running_scripts.lock().await;
+                for (_, kill_tx) in running.drain() {
+                    let _ = kill_tx.send(());
+                }
+            });
             tauri::async_runtime::block_on(state.service_mgr.stop_all());
         }
     });

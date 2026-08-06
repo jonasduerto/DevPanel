@@ -4,9 +4,15 @@
   "version": "0.2.0-2",
   "identifier": "com.devpanel.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": {
+      "script": "bin\\node\\node.exe bin\\node\\node_modules\\npm\\bin\\npm-cli.js run dev",
+      "cwd": ".."
+    },
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": {
+      "script": "bin\\node\\node.exe bin\\node\\node_modules\\npm\\bin\\npm-cli.js run build",
+      "cwd": ".."
+    },
     "frontendDist": "../build"
   },
   "app": {
@@ -18,7 +24,7 @@
         "height": 720,
         "minWidth": 880,
         "minHeight": 620,
-        "decorations": false,
+        "decorations": true,
         "transparent": true,
         "shadow": true,
         "alwaysOnTop": false,

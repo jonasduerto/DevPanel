@@ -1,9 +1,11 @@
 <script>
   import { invoke } from "@tauri-apps/api/core";
+  import { listen } from "@tauri-apps/api/event";
   import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import ConfirmDialog from "#lib/ConfirmDialog.svelte";
   import DebugDialog from "#lib/DebugDialog.svelte";
+  import Dialog from "#lib/Dialog.svelte";
   import WordPressSitePanel from "#lib/WordPressSitePanel.svelte";
   import { invokeWith } from "#lib/tauri-utils.svelte.js";
   import Loader from "#lib/Loader.svelte";
@@ -12,7 +14,6 @@
   import DetailsOutput from "#lib/DetailsOutput.svelte";
   import { notify } from "#lib/notifications.svelte.js";
   import {
-    Globe,
     ExternalLink,
     Folder,
     Terminal,
@@ -20,11 +21,9 @@
     Square,
     Shield,
     ShieldCheck,
-    EllipsisVertical,
     Database,
     Code,
     Wrench,
-    Trash2,
     Check,
     TriangleAlert,
     KeyRound
@@ -34,11 +33,18 @@
 
   let { workspace, onDeleted, onUpdated } = $props();
 
+  const editorLabels = /** @type {Record<string, string>} */ ({ vscode: "VS Code", cursor: "Cursor", sublime: "Sublime", claude: "Claude", codex: "Codex" });
+
   let error = $state("");
   let showMenu = $state(false);
+  let editorMenuOpen = $state(false);
+  /** @type {string[]} */
+  let availableEditors = $state([]);
   let showDebug = $state(false);
   /** @type {"configuration" | "database" | "tools" | "wordpress" | null} */
   let detailPanel = $state(null);
+  /** @type {"dev" | "database" | "packages"} */
+  let toolsTab = $state("dev");
   let confirmDelete = $state(false);
   /** @type {SitePaths | null} */
   let paths = $state(null);
@@ -53,6 +59,12 @@
   /** @type {any | null} */
   let projectCapabilities = $state(null);
   let projectTaskOutput = $state("");
+  /** @type {Record<string, string>} key = "source:script" -> live output */
+  let scriptOutputs = $state({});
+  /** @type {Set<string>} keys of scripts currently running ("source:script") */
+  let runningScripts = $state(new Set());
+  /** @type {(() => void)[]} */
+  let scriptEventUnlisteners = [];
   let phpOverrideUnavailable = $state(false);
   let toggleState = $state({ busy: false, error: "", operation: "" });
   let profileState = $state({ busy: false, error: "", operation: "" });
@@ -66,6 +78,7 @@
     try {
       const config = await invoke("get_config");
       preferredEditor = config.preferred_editor || "vscode";
+      availableEditors = await invoke("get_available_editors");
     } catch (e) {
       error = String(e);
     }
@@ -88,9 +101,18 @@
     return version && version !== "inherit" ? `PHP ${version}` : "PHP default";
   }
 
-  function preferredEditorLabel() {
-    return { vscode: "IDE", cursor: "Cursor", sublime: "Sublime", claude: "Claude", codex: "Codex" }[preferredEditor] || "IDE";
+  /** @param {string} id */
+  function editorLabel(id) {
+    return editorLabels[id] || id;
   }
+
+  function fileManagerLabel() {
+    const ua = navigator.userAgent.toLowerCase();
+    if (ua.includes("macintosh") || ua.includes("darwin") || ua.includes("mac os")) return "Finder";
+    if (ua.includes("linux")) return "Files";
+    return "Explorer";
+  }
+
 
   async function toggleSite() {
     error = "";
@@ -130,20 +152,13 @@
     }
   }
 
-  async function repairSite() {
-    error = "";
-    await invokeWith(toggleState, async () => {
-      await invoke("retry_database_setup", { id: workspace.id });
-      onUpdated?.();
-    }, "Repairing");
-  }
-
   async function configureHttps() {
     error = "";
     await invokeWith(toggleState, async () => {
       const warnings = await invoke("finish_domain_setup", { id: workspace.id });
       if (warnings.length) error = warnings.join("\n");
       onUpdated?.();
+      detailPanel = null;
     }, "Configurando HTTPS");
   }
 
@@ -196,6 +211,7 @@
     await invokeWith(profileState, async () => {
       await invoke("set_workspace_runtime_profile", { id: workspace.id, profile: runtimeProfile });
       onUpdated?.();
+      detailPanel = null;
     }, "Guardando");
   }
 
@@ -209,6 +225,7 @@
       });
       if (result.warnings?.length) error = result.warnings.join("\n");
       await onUpdated?.();
+      detailPanel = null;
     }, "Saving site settings", { toastSuccess: "Site settings saved" });
   }
 
@@ -220,6 +237,7 @@
         id: workspace.id,
         environment: laravelEnvironment,
       });
+      detailPanel = null;
     }, "Saving Laravel environment", { toastSuccess: ".env saved" });
   }
 
@@ -231,6 +249,7 @@
         laravelEnvironment = await invoke("get_laravel_environment", { id: workspace.id });
       }
       await onUpdated?.();
+      detailPanel = null;
     }, "Synchronizing database", { toastSuccess: "Database and project configuration synchronized" });
   }
 
@@ -243,13 +262,78 @@
     }, "Running project task", { toastSuccess: "Project task completed" });
   }
 
+  // Composer's own auto-run hooks (post-autoload-dump, post-update-cmd…) are
+  // noise for a developer looking for "how do I run this project" — they're
+  // never meant to be clicked by hand, so keep them out of the primary lists.
+  const COMPOSER_HOOK_PREFIXES = ["pre-", "post-"];
+  /** @param {{ composerScripts: { name: string, command: string }[] } | null} caps */
+  function isComposerHook(name) {
+    return COMPOSER_HOOK_PREFIXES.some((prefix) => name.startsWith(prefix));
+  }
+  /** @param {any} caps */
+  function devScripts(caps) {
+    return (caps?.composerScripts || []).filter((s) => !isComposerHook(s.name) && /dev|watch|serve/i.test(s.name));
+  }
+  /** @param {any} caps */
+  function noiseScripts(caps) {
+    return (caps?.composerScripts || []).filter((s) => isComposerHook(s.name));
+  }
+  /** @param {any} caps */
+  function secondaryScripts(caps) {
+    const dev = new Set(devScripts(caps).map((s) => s.name));
+    return (caps?.composerScripts || []).filter((s) => !isComposerHook(s.name) && !dev.has(s.name));
+  }
+
+  /** @param {"js" | "composer" | "artisan"} source @param {string} script */
+  async function startProjectScript(source, script) {
+    error = "";
+    const key = `${source}:${script}`;
+    scriptOutputs = { ...scriptOutputs, [key]: "" };
+    try {
+      const outputEvent = `project-script-output::${workspace.id}::${source}::${script}`;
+      const exitEvent = `project-script-exit::${workspace.id}::${source}::${script}`;
+      const unlistenOutput = await listen(outputEvent, (event) => {
+        scriptOutputs = { ...scriptOutputs, [key]: `${scriptOutputs[key] || ""}${event.payload}\n` };
+      });
+      const unlistenExit = await listen(exitEvent, () => {
+        const next = new Set(runningScripts);
+        next.delete(key);
+        runningScripts = next;
+        unlistenOutput();
+        unlistenExit();
+      });
+      scriptEventUnlisteners.push(unlistenOutput, unlistenExit);
+      await invoke("start_project_script", { id: workspace.id, source, script });
+      runningScripts = new Set(runningScripts).add(key);
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  /** @param {"js" | "composer"} source @param {string} script */
+  async function stopProjectScript(source, script) {
+    error = "";
+    try {
+      await invoke("stop_project_script", { id: workspace.id, source, script });
+    } catch (e) {
+      error = String(e);
+    }
+  }
+
+  onDestroy(() => {
+    scriptEventUnlisteners.forEach((unlisten) => unlisten());
+  });
+
   /** @param {"configuration" | "database" | "tools" | "wordpress"} panel */
   async function showDetails(panel) {
     detailPanel = detailPanel === panel ? null : panel;
     showMenu = false;
     if (detailPanel === "database") await sitePaths();
     if (detailPanel === "configuration") await loadRuntimeProfile();
-    if (detailPanel === "tools") projectCapabilities = await invoke("get_project_capabilities", { id: workspace.id });
+    if (detailPanel === "tools") {
+      toolsTab = "dev";
+      projectCapabilities = await invoke("get_project_capabilities", { id: workspace.id });
+    }
   }
 </script>
 
@@ -275,19 +359,11 @@
       <span class="preset-tag">{workspace.preset}</span>
       <span class="preset-tag php-tag" title="Site PHP runtime">{phpBadgeLabel()}</span>
       <DropdownMenu bind:open={showMenu} label="Site actions" title="Site actions">
-        <div class="menu-group-label">Details</div>
+        <div class="menu-group-label">Site</div>
         <button onclick={() => showDetails("configuration")}>Site configuration</button>
         {#if isWordPressSite()}<button onclick={() => showDetails("wordpress")}>WP Tools</button>{/if}
         <div class="menu-sep"></div>
-        <div class="menu-group-label">Open with another editor</div>
-        <div class="menu-editors">
-          {#each [["vscode", "VS Code"], ["cursor", "Cursor"], ["sublime", "Sublime"], ["claude", "Claude"], ["codex", "Codex"]] as [editor, label]}
-            {#if editor !== preferredEditor}<button onclick={() => runTool(editor)}>{label}</button>{/if}
-          {/each}
-        </div>
-        <div class="menu-sep"></div>
-        <div class="menu-group-label">Maintenance & diagnostics</div>
-        {#if usesDatabase()}<button onclick={repairSite} disabled={toggleState.busy}>Repair database</button>{/if}
+        <div class="menu-group-label">Diagnostics</div>
         <button onclick={() => { showMenu = false; showDebug = true; }}>Diagnostics & logs</button>
         <div class="menu-sep"></div>
         <button class="danger" onclick={() => { showMenu = false; confirmDelete = true; }}>Delete site</button>
@@ -328,46 +404,58 @@
   </BusyButton>
 
   <div class="quick-actions-bar">
-    <button class="action-btn" onclick={() => runTool("site")} disabled={!workspace.setup_complete || workspace.path_missing} title="Open in browser">
-      <ExternalLink size={12} />
-      <span>Site</span>
+    <button class="action-btn" onclick={() => runTool("site")} disabled={!workspace.setup_complete || workspace.path_missing} title="Open site in browser">
+      <ExternalLink size={14} />
     </button>
     {#if isWordPressSite()}
-      <button class="action-btn" onclick={() => runTool("admin")} disabled={!workspace.setup_complete || workspace.path_missing} title="Open WP Admin">
-        <KeyRound size={12} />
-        <span>Admin</span>
+      <button class="action-btn" onclick={() => runTool("admin")} disabled={!workspace.setup_complete || workspace.path_missing} title="Open WordPress Admin">
+        <KeyRound size={14} />
       </button>
     {/if}
-    <button class="action-btn" onclick={() => runTool("folder")} title="Open folder">
-      <Folder size={12} />
-      <span>Folder</span>
-    </button>
-    <button class="action-btn" onclick={() => runTool(preferredEditor)} oncontextmenu={(event) => { event.preventDefault(); showMenu = true; }} title="Open in preferred editor. Right-click to choose another editor.">
-      <Code size={12} />
-      <span>{preferredEditorLabel()}</span>
-    </button>
+    <DropdownMenu bind:open={editorMenuOpen} label="Open project in editor or file manager" title="Open project in editor or file manager" align="left" triggerClass="action-btn">
+      {#snippet trigger()}<Code size={14} />{/snippet}
+      {#if availableEditors.length}
+        <div class="menu-group-label">Open with</div>
+        <div class="menu-editors">
+          {#each availableEditors as editor (editor)}
+            <button class:active={editor === preferredEditor} onclick={() => { editorMenuOpen = false; runTool(editor); }}>
+              {#if editor === preferredEditor}<Check size={11} />{/if}{editorLabel(editor)}
+            </button>
+          {/each}
+        </div>
+        <div class="menu-sep"></div>
+      {/if}
+      <div class="menu-group-label">Open project folder</div>
+      <div class="menu-open-folder">
+        <button onclick={() => { editorMenuOpen = false; runTool("folder"); }}>
+          <Folder size={12} />
+          <span>{fileManagerLabel()}</span>
+        </button>
+      </div>
+    </DropdownMenu>
+    <span class="action-sep"></span>
     {#if usesDatabase()}
-      <button class="action-btn" onclick={() => showDetails("database")} title="Open site database tools">
-        <Database size={12} />
-        <span>DB</span>
+      <button class="action-btn" onclick={() => showDetails("database")} title="Database tools">
+        <Database size={14} />
       </button>
     {/if}
-    <button class="action-btn" onclick={() => showDetails("tools")} title="Open project tools">
-      <Wrench size={12} />
-      <span>Tools</span>
+    <button class="action-btn" onclick={() => showDetails("tools")} title="Project tools">
+      <Wrench size={14} />
     </button>
-    <button class="action-btn" onclick={() => runTool("cmder")} title="Open terminal">
-      <Terminal size={12} />
-      <span>Shell</span>
+    <button class="action-btn" onclick={() => runTool("cmder")} title="Open terminal (Cmder)">
+      <Terminal size={14} />
     </button>
   </div>
 
   {#if detailPanel === "configuration"}
+    <Dialog
+      title="General Configuration"
+      width="min(560px, calc(100vw - 32px))"
+      maxHeight="90%"
+      scrollable
+      onClose={() => (detailPanel = null)}
+    >
     <div class="details-panel">
-      <div class="details-header">
-        <Code size={14} class="text-accent" />
-        <h4 class="details-title">General Configuration</h4>
-      </div>
       <div class="detail-section">
         <div class="detail-row"><span>Domain</span><code>{workspace.domain}</code></div>
         <div class="detail-row"><span>Protocol</span><strong class={workspace.https_ready ? "txt-green" : ""}>{workspace.https_ready ? "HTTPS" : "HTTP"}</strong></div>
@@ -449,12 +537,14 @@
         <button class="btn-subtle" onclick={configureHttps} disabled={toggleState.busy}>Configure HTTPS</button>
       </div>
     </div>
+    </Dialog>
   {:else if detailPanel === "database"}
+    <Dialog
+      title="Database"
+      width="min(440px, calc(100vw - 32px))"
+      onClose={() => (detailPanel = null)}
+    >
     <div class="details-panel">
-      <div class="details-header">
-        <Database size={14} class="text-accent" />
-        <h4 class="details-title">Database</h4>
-      </div>
       <div class="detail-section">
         <div class="detail-row"><span>DB Name</span><code>{workspace.db_name}</code></div>
       </div>
@@ -466,33 +556,198 @@
         <button class="btn-subtle" onclick={() => runTool("composer")}>Open composer.json</button>
       </div>
     </div>
+    </Dialog>
   {:else if detailPanel === "tools"}
-    <div class="details-panel">
-      <div class="details-header">
-        <Wrench size={14} class="text-accent" />
-        <h4 class="details-title">Project Tools</h4>
+    <Dialog
+      title="Project Tools"
+      width="min(560px, calc(100vw - 32px))"
+      maxHeight="90%"
+      scrollable
+      onClose={() => (detailPanel = null)}
+    >
+    {#if projectCapabilities}
+      <div class="tab-nav">
+        <button class:active={toolsTab === "dev"} onclick={() => (toolsTab = "dev")}>⚡ Scripts & Dev</button>
+        <button class:active={toolsTab === "database"} onclick={() => (toolsTab = "database")}>🗄️ Database & Cache</button>
+        <button class:active={toolsTab === "packages"} onclick={() => (toolsTab = "packages")}>📦 Packages & Environment</button>
       </div>
-      {#if projectCapabilities}
-        <div class="detail-section">
-          <div class="project-files">
-            {#if projectCapabilities.composerJson}<span>composer.json</span>{/if}
-            {#if projectCapabilities.composerLock}<span>composer.lock</span>{/if}
-            {#if projectCapabilities.packageJson}<span>package.json</span>{/if}
-            {#if projectCapabilities.viteConfig}<span>vite.config</span>{/if}
-            {#if projectCapabilities.artisan}<span>artisan</span>{/if}
-            {#if projectCapabilities.laravelEnv}<span>.env</span>{/if}
+
+      {#if toolsTab === "dev"}
+        <div class="tab-content details-panel">
+          {#if projectCapabilities.packageJson}
+            <div class="detail-section">
+              <div class="detail-section-title">JS scripts ({projectCapabilities.jsRunner})</div>
+              {#if projectCapabilities.jsScripts.length}
+                <div class="project-task-row">
+                  {#each projectCapabilities.jsScripts as scriptEntry (scriptEntry.name)}
+                    {@const key = `js:${scriptEntry.name}`}
+                    {#if runningScripts.has(key)}
+                      <button class="btn-subtle danger" onclick={() => stopProjectScript("js", scriptEntry.name)} title={scriptEntry.command}>■ Stop {scriptEntry.name}</button>
+                    {:else}
+                      <button class="btn-subtle" onclick={() => startProjectScript("js", scriptEntry.name)} disabled={!projectCapabilities.jsRunnerAvailable} title={`${projectCapabilities.jsRunner} run ${scriptEntry.name} — ${scriptEntry.command}`}>{projectCapabilities.jsRunner} run {scriptEntry.name}</button>
+                    {/if}
+                  {/each}
+                </div>
+                {#each projectCapabilities.jsScripts as scriptEntry (scriptEntry.name)}
+                  {@const key = `js:${scriptEntry.name}`}
+                  {#if scriptOutputs[key]}<DetailsOutput title={`${scriptEntry.name} output`} value={scriptOutputs[key]} />{/if}
+                {/each}
+              {:else}
+                <div class="tool-note">Sin scripts JS detectados</div>
+              {/if}
+              {#if !projectCapabilities.jsRunnerAvailable}<div class="tool-note" title="Falta el ejecutable {projectCapabilities.jsRunner}">Falta el ejecutable {projectCapabilities.jsRunner}. Install it in DevPanel/bin first.</div>{/if}
+            </div>
+          {/if}
+
+          {#if projectCapabilities.artisan}
+            <div class="detail-section">
+              <div class="detail-section-title">Laravel watchers</div>
+              <div class="project-task-row">
+                {#each [{ key: "serve", label: "php artisan serve" }, { key: "queue:work", label: "php artisan queue:work" }] as watcher (watcher.key)}
+                  {@const rkey = `artisan:${watcher.key}`}
+                  {#if runningScripts.has(rkey)}
+                    <button class="btn-subtle danger" onclick={() => stopProjectScript("artisan", watcher.key)}>■ Stop {watcher.key}</button>
+                  {:else}
+                    <button class="btn-subtle" onclick={() => startProjectScript("artisan", watcher.key)} disabled={!projectCapabilities.devpanelPhpAvailable}>{watcher.label}</button>
+                  {/if}
+                {/each}
+              </div>
+              {#each [{ key: "serve" }, { key: "queue:work" }] as watcher (watcher.key)}
+                {@const rkey = `artisan:${watcher.key}`}
+                {#if scriptOutputs[rkey]}<DetailsOutput title={`${watcher.key} output`} value={scriptOutputs[rkey]} />{/if}
+              {/each}
+            </div>
+          {/if}
+
+          {#if devScripts(projectCapabilities).length}
+            <div class="detail-section">
+              <div class="detail-section-title">Composer dev scripts</div>
+              <div class="project-task-row">
+                {#each devScripts(projectCapabilities) as scriptEntry (scriptEntry.name)}
+                  {@const key = `composer:${scriptEntry.name}`}
+                  {#if runningScripts.has(key)}
+                    <button class="btn-subtle danger" onclick={() => stopProjectScript("composer", scriptEntry.name)} title={scriptEntry.command}>■ Stop {scriptEntry.name}</button>
+                  {:else}
+                    <button class="btn-subtle" onclick={() => startProjectScript("composer", scriptEntry.name)} disabled={!projectCapabilities.devpanelComposerAvailable} title={scriptEntry.command}>composer run {scriptEntry.name}</button>
+                  {/if}
+                {/each}
+              </div>
+              {#each devScripts(projectCapabilities) as scriptEntry (scriptEntry.name)}
+                {@const key = `composer:${scriptEntry.name}`}
+                {#if scriptOutputs[key]}<DetailsOutput title={`${scriptEntry.name} output`} value={scriptOutputs[key]} />{/if}
+              {/each}
+            </div>
+          {/if}
+
+          {#if !projectCapabilities.packageJson && !projectCapabilities.artisan && !devScripts(projectCapabilities).length}
+            <div class="tool-note">No dev scripts detected for this project.</div>
+          {/if}
+        </div>
+      {:else if toolsTab === "database"}
+        <div class="tab-content details-panel">
+          {#if projectCapabilities.artisan}
+            <div class="detail-section">
+              <div class="detail-section-title">Migrations</div>
+              <div class="project-task-row">
+                <button class="btn-subtle" onclick={() => runProjectTask("artisan_migrate")} disabled={projectTaskState.busy}>Migrate</button>
+              </div>
+            </div>
+            <div class="detail-section">
+              <div class="detail-section-title">Cache</div>
+              <div class="project-task-row">
+                <button class="btn-subtle" onclick={() => runProjectTask("artisan_cache_clear")} disabled={projectTaskState.busy}>Clear all cache</button>
+                <button class="btn-subtle" onclick={() => runProjectTask("artisan_config_clear")} disabled={projectTaskState.busy}>Clear config</button>
+                <button class="btn-subtle" onclick={() => runProjectTask("artisan_route_clear")} disabled={projectTaskState.busy}>Clear routes</button>
+                <button class="btn-subtle" onclick={() => runProjectTask("artisan_view_clear")} disabled={projectTaskState.busy}>Clear views</button>
+              </div>
+            </div>
+            {#if projectTaskState.busy}<div class="tool-note">{projectTaskState.operation || "Running..."}</div>{/if}
+            {#if projectTaskOutput}<DetailsOutput title="Task output" value={projectTaskOutput} />{/if}
+          {:else}
+            <div class="tool-note">No artisan file detected — nothing to migrate or cache here.</div>
+          {/if}
+        </div>
+      {:else if toolsTab === "packages"}
+        <div class="tab-content details-panel">
+          <div class="detail-section">
+            <div class="project-files">
+              {#if projectCapabilities.composerJson}<span>composer.json</span>{/if}
+              {#if projectCapabilities.composerLock}<span>composer.lock</span>{/if}
+              {#if projectCapabilities.packageJson}<span>package.json ({projectCapabilities.jsRunner})</span>{/if}
+              {#if projectCapabilities.bundler}<span>{projectCapabilities.bundler}</span>{/if}
+              {#if projectCapabilities.artisan}<span>artisan</span>{/if}
+              {#if projectCapabilities.laravelEnv}<span>.env</span>{/if}
+            </div>
           </div>
-          {#if projectCapabilities.composerJson}<div class="project-task-row"><button class="btn-subtle" onclick={() => runProjectTask("composer_install")} disabled={projectTaskState.busy}>Composer install</button><button class="btn-subtle" onclick={() => runProjectTask("composer_update")} disabled={projectTaskState.busy}>Composer update</button></div>{/if}
-          {#if projectCapabilities.packageJson}<div class="project-task-row"><button class="btn-subtle" onclick={() => runProjectTask("npm_install")} disabled={projectTaskState.busy}>NPM install</button><button class="btn-subtle" onclick={() => runProjectTask("npm_update")} disabled={projectTaskState.busy}>NPM update</button></div>{/if}
-          {#if projectCapabilities.packageJson && !projectCapabilities.devpanelNodeAvailable}<div class="tool-note">Node.js is missing from DevPanel Modules. Install it there before running NPM.</div>{/if}
-          {#if projectCapabilities.artisan}<div class="project-task-row"><button class="btn-subtle" onclick={() => runProjectTask("artisan_migrate")} disabled={projectTaskState.busy}>Migrate</button><button class="btn-subtle" onclick={() => runProjectTask("artisan_cache_clear")} disabled={projectTaskState.busy}>Clear all cache</button><button class="btn-subtle" onclick={() => runProjectTask("artisan_config_clear")} disabled={projectTaskState.busy}>Clear config</button><button class="btn-subtle" onclick={() => runProjectTask("artisan_route_clear")} disabled={projectTaskState.busy}>Clear routes</button><button class="btn-subtle" onclick={() => runProjectTask("artisan_view_clear")} disabled={projectTaskState.busy}>Clear views</button></div>{/if}
+          {#if projectCapabilities.composerJson}
+            <div class="detail-section">
+              <div class="detail-section-title">Composer</div>
+              <div class="project-task-row">
+                <button class="btn-subtle" onclick={() => runProjectTask("composer_install")} disabled={projectTaskState.busy}>Composer install</button>
+                <button class="btn-subtle" onclick={() => runProjectTask("composer_update")} disabled={projectTaskState.busy}>Composer update</button>
+              </div>
+            </div>
+          {/if}
+          {#if projectCapabilities.packageJson}
+            <div class="detail-section">
+              <div class="detail-section-title">{projectCapabilities.jsRunner}</div>
+              <div class="project-task-row">
+                <button class="btn-subtle" onclick={() => runProjectTask("npm_install")} disabled={projectTaskState.busy}>{projectCapabilities.jsRunner} install</button>
+                <button class="btn-subtle" onclick={() => runProjectTask("npm_update")} disabled={projectTaskState.busy}>{projectCapabilities.jsRunner} update</button>
+              </div>
+              {#if !projectCapabilities.jsRunnerAvailable}<div class="tool-note">Falta el ejecutable {projectCapabilities.jsRunner}. Install it in DevPanel/bin first.</div>{/if}
+            </div>
+          {/if}
           {#if projectTaskState.busy}<div class="tool-note">{projectTaskState.operation || "Running..."}</div>{/if}
-          {#if projectTaskOutput}<DetailsOutput title="Project task output" value={projectTaskOutput} />{/if}
+          {#if projectTaskOutput}<DetailsOutput title="Task output" value={projectTaskOutput} />{/if}
+          {#if secondaryScripts(projectCapabilities).length}
+            <div class="detail-section">
+              <div class="detail-section-title">Composer scripts</div>
+              <div class="project-task-row">
+                {#each secondaryScripts(projectCapabilities) as scriptEntry (scriptEntry.name)}
+                  {@const key = `composer:${scriptEntry.name}`}
+                  {#if runningScripts.has(key)}
+                    <button class="btn-subtle danger" onclick={() => stopProjectScript("composer", scriptEntry.name)} title={scriptEntry.command}>■ Stop {scriptEntry.name}</button>
+                  {:else}
+                    <button class="btn-subtle" onclick={() => startProjectScript("composer", scriptEntry.name)} disabled={!projectCapabilities.devpanelComposerAvailable} title={scriptEntry.command}>{scriptEntry.name}</button>
+                  {/if}
+                {/each}
+              </div>
+              {#each secondaryScripts(projectCapabilities) as scriptEntry (scriptEntry.name)}
+                {@const key = `composer:${scriptEntry.name}`}
+                {#if scriptOutputs[key]}<DetailsOutput title={`${scriptEntry.name} output`} value={scriptOutputs[key]} />{/if}
+              {/each}
+            </div>
+          {/if}
+          {#if noiseScripts(projectCapabilities).length}
+            <details class="detail-section">
+              <summary class="detail-section-title">Composer hook scripts ({noiseScripts(projectCapabilities).length})</summary>
+              <div class="project-task-row">
+                {#each noiseScripts(projectCapabilities) as scriptEntry (scriptEntry.name)}
+                  {@const key = `composer:${scriptEntry.name}`}
+                  {#if runningScripts.has(key)}
+                    <button class="btn-subtle danger" onclick={() => stopProjectScript("composer", scriptEntry.name)} title={scriptEntry.command}>■ Stop {scriptEntry.name}</button>
+                  {:else}
+                    <button class="btn-subtle" onclick={() => startProjectScript("composer", scriptEntry.name)} disabled={!projectCapabilities.devpanelComposerAvailable} title={scriptEntry.command}>{scriptEntry.name}</button>
+                  {/if}
+                {/each}
+              </div>
+            </details>
+          {/if}
         </div>
       {/if}
-    </div>
+    {/if}
+    </Dialog>
   {:else if detailPanel === "wordpress"}
-    <WordPressSitePanel {workspace} onUpdated={onUpdated} />
+    <Dialog
+      title="WordPress Tools"
+      width="min(520px, calc(100vw - 32px))"
+      maxHeight="90%"
+      scrollable
+      onClose={() => (detailPanel = null)}
+    >
+      <WordPressSitePanel {workspace} onUpdated={onUpdated} />
+    </Dialog>
   {/if}
 
   {#if toggleState.error || profileState.error || error}

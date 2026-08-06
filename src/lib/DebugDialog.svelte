@@ -3,7 +3,7 @@
   // every intermediate chain here has no runtime payoff.
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
-  import Modal from "./Modal.svelte";
+  import Dialog from "./Dialog.svelte";
   import InlineBanner from "#lib/InlineBanner.svelte";
   import { invokeWith } from "#lib/tauri-utils.svelte.js";
 
@@ -36,9 +36,10 @@
 
 </script>
 
-<Modal
-  onClose={onClose}
+<Dialog
+  title={`Diagnostics — ${workspace.name}`}
   ariaLabel={`Diagnostics for ${workspace.name}`}
+  onClose={onClose}
   width="100%"
   maxHeight="90%"
   padding="14px"
@@ -46,11 +47,6 @@
   scrollable
 >
   <div class="debug-dialog">
-    <div class="dialog-header">
-      <span>Diagnostics — {workspace.name}</span>
-      <button class="btn-close-x" onclick={onClose}>✕</button>
-    </div>
-
     {#if loading}
       <div class="hint">Loading diagnostics…</div>
     {:else if error}
@@ -62,5 +58,5 @@
       <pre class="json-preview">{JSON.stringify(context, null, 2)}</pre>
     {/if}
   </div>
-</Modal>
+</Dialog>
 

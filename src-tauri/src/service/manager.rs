@@ -804,7 +804,31 @@ pub fn find_external_installations(executable: &str) -> Vec<PathBuf> {
 }
 
 pub fn binary_version(path: &Path) -> Option<String> {
-    let output = std::process::Command::new(path).arg("--version").output().ok()?;
+    use std::process::Child;
+    let mut child: Child = std::process::Command::new(path)
+        .arg("--version")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    // Bound the probe: some server binaries never exit on --version, and a
+    // stuck spawn would otherwise block the Modules scan indefinitely.
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if std::time::Instant::now() > deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(_) => return None,
+        }
+    }
+    let output = child.wait_with_output().ok()?;
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),

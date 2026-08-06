@@ -10,8 +10,14 @@ use crate::service::types::ServiceStatus;
 use crate::state::AppState;
 
 #[tauri::command]
-pub fn list_addons(state: State<'_, AppState>) -> Vec<AddonInventoryItem> {
+pub fn list_addons(
+    state: State<'_, AppState>,
+    force_refresh: Option<bool>,
+) -> Vec<AddonInventoryItem> {
     let addon_mgr = state.addon_mgr.lock().unwrap();
+    if force_refresh == Some(true) {
+        addon_mgr.invalidate_static_cache();
+    }
     let statuses: HashMap<String, ServiceStatus> = {
         let status_vec = tauri::async_runtime::block_on(state.service_mgr.all_statuses());
         status_vec.into_iter().collect()
@@ -223,7 +229,10 @@ pub fn get_addon_states(state: State<'_, AppState>) -> BTreeMap<String, AddonSta
 /// Installs a native Windows runtime only after the user explicitly requests
 /// it from Modules. DevPanel never invokes this during detection or startup.
 #[tauri::command]
-pub async fn install_native_addon(addon_id: String) -> Result<String, String> {
+pub async fn install_native_addon(
+    addon_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     let package_id = match addon_id.as_str() {
         "apache" => "Apache.HttpServer",
         "nginx" => "Nginx.Nginx",
@@ -262,5 +271,9 @@ pub async fn install_native_addon(addon_id: String) -> Result<String, String> {
         }
     })
     .await
-    .map_err(|error| format!("Native install task panicked: {error}"))?
+    .map_err(|error| format!("Windows Package Manager task failed: {error}"))?
+    .map(|message| {
+        state.addon_mgr.lock().unwrap().invalidate_static_cache();
+        message
+    })
 }

@@ -1,5 +1,5 @@
 <script>
-  import Modal from "./Modal.svelte";
+  import Dialog from "./Dialog.svelte";
 
   let {
     message,
@@ -23,7 +23,8 @@
   }
 </script>
 
-<Modal
+<Dialog
+  title="Confirmation"
   onClose={onCancel}
   ariaLabel="Confirmation"
   width="min(440px, calc(100vw - 32px))"
@@ -58,5 +59,5 @@
       </button>
     </div>
   </div>
-</Modal>
+</Dialog>
 

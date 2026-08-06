@@ -10,6 +10,7 @@
   import ToolsView from "#lib/ToolsView.svelte";
   import ModulesView from "#lib/ModulesView.svelte";
   import Toast from "#lib/Toast.svelte";
+  import Dialog from "#lib/Dialog.svelte";
   import LoadingBar from "#lib/LoadingBar.svelte";
   import StatusBar from "#lib/StatusBar.svelte";
   import { subscribeToasts, subscribeLoading, subscribeStatus } from "#lib/notifications.svelte.js";
@@ -201,20 +202,17 @@
 </div>
 
 {#if updateInfo}
-  <div class="modal-overlay" role="presentation">
-    <dialog open class="modal-dialog" aria-labelledby="update-available-title">
-      <div class="modal-header">
-        <h3 id="update-available-title">Update available</h3>
-      </div>
-      <div class="modal-body">
-        <p><strong>{updateInfo.latest_version}</strong> is available. You are running {updateInfo.current_version}.</p>
-        <p>DevPanel will open the GitHub release page; nothing is downloaded or installed automatically.</p>
-      </div>
-      <div class="modal-footer">
-        <button class="btn-secondary" onclick={() => (updateInfo = null)}>Later</button>
-        <button class="btn-primary" onclick={openUpdateDownload}>Open GitHub release</button>
-      </div>
-    </dialog>
-  </div>
+  <Dialog
+    title="Update available"
+    width="min(440px, calc(100vw - 32px))"
+    onClose={() => (updateInfo = null)}
+  >
+    <p><strong>{updateInfo.latest_version}</strong> is available. You are running {updateInfo.current_version}.</p>
+    <p>DevPanel will open the GitHub release page; nothing is downloaded or installed automatically.</p>
+    {#snippet footer()}
+      <button class="btn-secondary" onclick={() => (updateInfo = null)}>Later</button>
+      <button class="btn-primary" onclick={openUpdateDownload}>Open GitHub release</button>
+    {/snippet}
+  </Dialog>
 {/if}
 

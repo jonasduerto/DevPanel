@@ -1,4 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use crate::service::types::ServiceStatus;
 use crate::service::ServiceManager;
@@ -6,15 +8,35 @@ use crate::workspace::Workspace;
 
 use super::types::*;
 
+/// How long static detection (binary presence, external installations) may be
+/// served from cache before re-scanning. Runtime status is always computed
+/// fresh. Scanning spawns processes (where.exe + version probes), so it is
+/// expensive on Windows and must not run on every Modules open.
+const STATIC_CACHE_TTL: Duration = Duration::from_secs(300);
+
+struct StaticScanCache {
+    available: bool,
+    external_installations: Vec<ExternalInstallation>,
+    at: Instant,
+}
+
 pub struct AddonManager {
     definitions: Vec<AddonDefinition>,
+    static_cache: Mutex<HashMap<String, StaticScanCache>>,
 }
 
 impl AddonManager {
     pub fn new() -> Self {
         Self {
             definitions: Self::builtin_definitions(),
+            static_cache: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Drops the cached static scan so the next inventory re-detects binaries
+    /// and external installations. Called after install/uninstall mutations.
+    pub fn invalidate_static_cache(&self) {
+        self.static_cache.lock().unwrap().clear();
     }
 
     #[allow(dead_code)]
@@ -37,8 +59,28 @@ impl AddonManager {
             .iter()
             .map(|def| {
                 let addon_state = state.get(&def.id).cloned().unwrap_or_default();
-                let available = Self::is_available(service_mgr, &def.id);
-                let external_installations = Self::external_installations(&def.id);
+                let (available, external_installations) = {
+                    let mut cache = self.static_cache.lock().unwrap();
+                    let fresh = cache
+                        .get(&def.id)
+                        .filter(|entry| entry.at.elapsed() < STATIC_CACHE_TTL);
+                    match fresh {
+                        Some(entry) => (entry.available, entry.external_installations.clone()),
+                        None => {
+                            let available = Self::is_available(service_mgr, &def.id);
+                            let external_installations = Self::external_installations(&def.id);
+                            cache.insert(
+                                def.id.clone(),
+                                StaticScanCache {
+                                    available,
+                                    external_installations: external_installations.clone(),
+                                    at: Instant::now(),
+                                },
+                            );
+                            (available, external_installations)
+                        }
+                    }
+                };
                 let running = service_statuses
                     .get(&def.id)
                     .map(|s| matches!(s, ServiceStatus::Running))

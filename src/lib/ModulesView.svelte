@@ -1,9 +1,24 @@
+<script module>
+  // Environment scanning is expensive: cache the first scan for the whole app
+  // session and only re-scan when the user explicitly clicks "Refresh Status"
+  // (module start/stop/install actions also refresh via loadData()).
+  /** @type {any[] | null} */
+  let cachedModules = null;
+  /** @type {any | null} */
+  let cachedPorts = null;
+  /** @type {any | null} */
+  let cachedMysqlStatus = null;
+  /** @type {any[] | null} */
+  let cachedMysqlBackups = null;
+</script>
+
 <script>
   // @ts-nocheck
   import { invoke } from "@tauri-apps/api/core";
   import { openPath, openUrl } from "@tauri-apps/plugin-opener";
   import { onMount } from "svelte";
   import ConfirmDialog from "#lib/ConfirmDialog.svelte";
+  import Dialog from "#lib/Dialog.svelte";
   import {
     Server, Database, Code2, Zap, Wrench, Mail,
     RefreshCw, TriangleAlert, Settings2, FileText,
@@ -72,25 +87,37 @@
   let mysqlPending = $state(null);
 
   onMount(async () => {
+    if (cachedModules) {
+      modulesList = cachedModules;
+      appPorts = cachedPorts ? { ...cachedPorts } : appPorts;
+      mysqlStatus = cachedMysqlStatus;
+      mysqlBackups = cachedMysqlBackups;
+      loading = false;
+      return;
+    }
     await loadData();
   });
 
-  async function loadData() {
+  async function loadData(force = false) {
     loading = true;
     error = "";
     try {
       const [addons, cfg, dbStatus, backups] = await Promise.all([
-        invoke("list_addons"),
+        invoke("list_addons", { forceRefresh: force }),
         invoke("get_config"),
         invoke("get_database_tool_status").catch(() => null),
         invoke("list_database_backups").catch(() => []),
       ]);
       modulesList = addons;
+      cachedModules = addons;
       if (cfg && cfg.ports) {
         appPorts = { ...cfg.ports };
+        cachedPorts = { ...cfg.ports };
       }
       mysqlStatus = dbStatus;
+      cachedMysqlStatus = dbStatus;
       mysqlBackups = backups;
+      cachedMysqlBackups = backups;
     } catch (e) {
       error = String(e);
     }
@@ -120,7 +147,7 @@
     error = "";
     try {
       successMsg = await invoke("install_native_addon", { addonId: id });
-      await loadData();
+      await loadData(true);
     } catch (e) {
       error = String(e);
     }
@@ -427,7 +454,7 @@
       <h2 class="view-title">Environment Modules & Customization</h2>
       <p class="view-desc">Enable, configure, and customize installed modules and settings (runtimes, ports, php.ini, extensions, and logs).</p>
     </div>
-    <button class="btn-ghost btn-sm" onclick={loadData} disabled={loading}>
+    <button class="btn-ghost btn-sm" onclick={() => loadData(true)} disabled={loading}>
       <RefreshCw size={13} class={loading ? "spin" : ""} />
       <span>Refresh Status</span>
     </button>
@@ -459,34 +486,32 @@
   {/if}
 
   {#if webPortConflict}
-    <div class="modal-overlay" role="presentation">
-      <dialog open class="modal-dialog" aria-labelledby="web-port-conflict-title">
-        <div class="modal-header">
-          <h3 id="web-port-conflict-title">Web server port conflict</h3>
-        </div>
-        <div class="modal-body">
-          <p>
-            {displayModuleName(webPortConflict.otherId)} already uses port {appPorts[webPortConflict.otherId]}.
-            {displayModuleName(webPortConflict.targetId)} cannot use the same port while both are active.
-          </p>
-          <p>Use the next available port, starting at 8080, for {displayModuleName(webPortConflict.targetId)}?</p>
-        </div>
-        <div class="modal-footer">
-          <button class="btn-secondary" onclick={() => (webPortConflict = null)} disabled={resolvingWebPort}>Cancel</button>
-          <button class="btn-primary" onclick={resolveWebPortConflict} disabled={resolvingWebPort}>
-            {resolvingWebPort ? "Finding free port..." : "Use available port"}
-          </button>
-        </div>
-      </dialog>
-    </div>
+    <Dialog
+      title="Web server port conflict"
+      width="min(480px, calc(100vw - 32px))"
+      onClose={() => (webPortConflict = null)}
+    >
+      <p>
+        {displayModuleName(webPortConflict.otherId)} already uses port {appPorts[webPortConflict.otherId]}.
+        {displayModuleName(webPortConflict.targetId)} cannot use the same port while both are active.
+      </p>
+      <p>Use the next available port, starting at 8080, for {displayModuleName(webPortConflict.targetId)}?</p>
+      {#snippet footer()}
+        <button class="btn-secondary" onclick={() => (webPortConflict = null)} disabled={resolvingWebPort}>Cancel</button>
+        <button class="btn-primary" onclick={resolveWebPortConflict} disabled={resolvingWebPort}>
+          {resolvingWebPort ? "Finding free port..." : "Use available port"}
+        </button>
+      {/snippet}
+    </Dialog>
   {/if}
 
   {#if loading}
-    <div class="loading-state">
-      <RefreshCw size={24} class="spin text-accent" />
-      <p>Loading modules & environment configurations...</p>
+    <div class="loading-inline">
+      <RefreshCw size={12} class="spin text-accent" />
+      <span>Refreshing modules & environment configurations...</span>
     </div>
-  {:else}
+  {/if}
+
     <!-- SECTION 1: INSTALLED MODULES -->
     <div class="section-title-wrapper">
       <PackageCheck size={16} class="text-accent" />
@@ -897,7 +922,6 @@
         {/each}
       </div>
     {/if}
-  {/if}
 </div>
 
 {#if mysqlPending}

@@ -2,9 +2,11 @@ use std::fs;
 use std::os::windows::process::CommandExt;
 use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
-use std::{path::PathBuf, process::Command};
+use std::{path::Path, path::PathBuf, process::Command};
 
 use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::db::{engine_by_name, DatabaseEngine};
 use crate::environment;
@@ -323,6 +325,13 @@ pub struct WorkspacePaths {
 
 /// Project files detected from the actual source folder. The UI uses this to
 /// show only tools that the project can genuinely run.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptEntry {
+    pub name: String,
+    pub command: String,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectCapabilities {
@@ -330,11 +339,110 @@ pub struct ProjectCapabilities {
     pub composer_lock: bool,
     pub package_json: bool,
     pub vite_config: bool,
+    pub bundler: Option<String>,
     pub artisan: bool,
     pub laravel_env: bool,
     pub devpanel_composer_available: bool,
     pub devpanel_node_available: bool,
     pub devpanel_php_available: bool,
+    /// Runner resolved from lockfiles (bun/pnpm/yarn/npm) per package.json.
+    pub js_runner: String,
+    pub js_runner_available: bool,
+    /// Every script declared in package.json's "scripts" — the UI turns each
+    /// into a button rather than hardcoding npm/bun/etc commands.
+    pub js_scripts: Vec<ScriptEntry>,
+    /// Scripts declared in composer.json's "scripts" (Laravel's `composer run dev`
+    /// convention lives here), run via `composer run-script <name>`.
+    pub composer_scripts: Vec<ScriptEntry>,
+}
+
+const BUNDLER_CONFIG_NAMES: &[&str] = &[
+    "vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs",
+    "webpack.config.js", "webpack.config.ts", "webpack.config.cjs", "webpack.config.mjs",
+    "rspack.config.js", "rspack.config.ts", "rspack.config.mjs", "rspack.config.cjs",
+    "rsbuild.config.js", "rsbuild.config.ts", "rsbuild.config.mjs",
+    "turbopack.config.js", "turbopack.config.ts",
+    "farm.config.js", "farm.config.ts",
+    ".parcelrc",
+    "rollup.config.js", "rollup.config.ts", "rollup.config.mjs",
+    "esbuild.config.js", "esbuild.config.ts", "esbuild.config.mjs",
+    "mako.config.js", "mako.config.ts",
+    "wmr.config.js", "wmr.config.ts",
+    "snowpack.config.js", "snowpack.config.ts",
+    ".swcrc",
+];
+
+fn detect_bundler(project: &Path) -> Option<String> {
+    BUNDLER_CONFIG_NAMES
+        .iter()
+        .find(|name| project.join(name).is_file())
+        .map(|name| name.to_string())
+}
+
+/// Resolves which JS runner to invoke a package.json script with. Lockfiles
+/// decide the runner deterministically; with none present, `bun` is preferred
+/// when DevPanel has it installed (fast default), else `npm`. The binary is
+/// always looked up under DevPanel/bin, never the system PATH — see
+/// `scaffold::find_tool`.
+fn detect_js_runner(root: &Path, project: &Path) -> (String, Option<PathBuf>) {
+    let name = if project.join("bun.lock").is_file() || project.join("bun.lockb").is_file() {
+        "bun"
+    } else if project.join("pnpm-lock.yaml").is_file() {
+        "pnpm"
+    } else if project.join("yarn.lock").is_file() {
+        "yarn"
+    } else if project.join("package-lock.json").is_file() {
+        "npm"
+    } else if scaffold::find_tool(root, "bun", "bun.exe").is_some() {
+        "bun"
+    } else {
+        "npm"
+    };
+    let (dir, binary) = match name {
+        "bun" => ("bun", "bun.exe"),
+        "pnpm" => ("pnpm", "pnpm.cmd"),
+        "yarn" => ("yarn", "yarn.cmd"),
+        _ => ("node", "npm.cmd"),
+    };
+    (name.to_string(), scaffold::find_tool(root, dir, binary))
+}
+
+/// Reads the `"scripts"` object of a package.json/composer.json-shaped file.
+/// composer.json scripts may be a single string or an array of shell steps;
+/// only the display command differs, both are run by name via the tool's own
+/// `run-script`/`run` subcommand rather than re-executing the raw text.
+fn read_scripts(manifest: &Path) -> Vec<ScriptEntry> {
+    let Ok(content) = fs::read_to_string(manifest) else {
+        return Vec::new();
+    };
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) else {
+        return Vec::new();
+    };
+    let Some(scripts) = json.get("scripts").and_then(|value| value.as_object()) else {
+        return Vec::new();
+    };
+    scripts
+        .iter()
+        .map(|(name, command)| ScriptEntry {
+            name: name.clone(),
+            command: match command {
+                serde_json::Value::String(s) => s.clone(),
+                serde_json::Value::Array(steps) => steps
+                    .iter()
+                    .filter_map(|step| step.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" && "),
+                other => other.to_string(),
+            },
+        })
+        .collect()
+}
+
+/// True if `name` is declared under `"scripts"` in `manifest` — the only
+/// check that gates `start_project_script`, so the script text always comes
+/// from the project's own file, never from free-form UI input.
+fn script_is_declared(manifest: &Path, name: &str) -> bool {
+    read_scripts(manifest).iter().any(|entry| entry.name == name)
 }
 
 #[derive(Serialize)]
@@ -1634,17 +1742,23 @@ pub async fn get_project_capabilities(
         if !project.is_dir() {
             return Err("The project folder is missing.".into());
         }
+        let (js_runner, js_runner_path) = detect_js_runner(&root, &project);
         Ok(ProjectCapabilities {
             composer_json: project.join("composer.json").is_file(),
             composer_lock: project.join("composer.lock").is_file(),
             package_json: project.join("package.json").is_file(),
             vite_config: ["vite.config.js", "vite.config.ts", "vite.config.mjs", "vite.config.cjs"]
                 .iter().any(|name| project.join(name).is_file()),
+            bundler: detect_bundler(&project),
             artisan: project.join("artisan").is_file(),
             laravel_env: project.join(".env").is_file(),
             devpanel_composer_available: scaffold::find_tool(&root, "composer", "composer.bat").is_some(),
             devpanel_node_available: scaffold::find_tool(&root, "node", "npm.cmd").is_some(),
             devpanel_php_available: scaffold::find_tool(&root, "php", "php.exe").is_some(),
+            js_runner,
+            js_runner_available: js_runner_path.is_some(),
+            js_scripts: read_scripts(&project.join("package.json")),
+            composer_scripts: read_scripts(&project.join("composer.json")),
         })
     }).await.map_err(|error| format!("Project inspection task panicked: {error}"))?
 }
@@ -1736,6 +1850,154 @@ pub async fn run_project_task(
             })
         }
     }).await.map_err(|error| format!("Project task panicked: {error}"))?
+}
+
+/// Starts a long-running project script (`bun run dev`, `composer run-script dev`,
+/// Vite watchers, `php artisan serve`…) that never exits on its own, so it
+/// can't go through `run_project_task`'s blocking `.output()`. Output streams
+/// to the frontend as `project-script-output::{id}::{source}::{script}` events
+/// and the exit as `project-script-exit::{id}::{source}::{script}`.
+///
+/// `script` must already be declared in the project's own package.json/
+/// composer.json — same "no arbitrary command from the UI" rule as
+/// `run_project_task`, just checked against a different reviewed set (the
+/// file's own scripts) instead of a hardcoded list.
+#[tauri::command]
+pub async fn start_project_script(
+    id: String,
+    source: String,
+    script: String,
+    app: AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let workspace = state
+        .workspace_store
+        .lock()
+        .await
+        .get(&id)
+        .ok_or_else(|| format!("Workspace '{id}' not found"))?;
+    let root = state.service_mgr.root().clone();
+    let www_dir = state.config.lock().await.get().www_dir.clone().unwrap_or_else(|| "www".into());
+    let project = scaffold::workspace_path(&root, &www_dir, &workspace);
+    if !project.is_dir() {
+        return Err("The project folder is missing.".into());
+    }
+
+    let mut command = match source.as_str() {
+        "js" => {
+            let (runner_name, runner_path) = detect_js_runner(&root, &project);
+            let runner_path = runner_path.ok_or_else(|| {
+                format!("The detected JS package manager ({runner_name}) is not installed in DevPanel/bin.")
+            })?;
+            if !script_is_declared(&project.join("package.json"), &script) {
+                return Err(format!("Script '{script}' is not declared in package.json."));
+            }
+            let mut cmd = tokio::process::Command::new(runner_path);
+            cmd.args(["run", script.as_str()]);
+            cmd
+        }
+        "composer" => {
+            let composer_path = scaffold::find_tool(&root, "composer", "composer.bat")
+                .ok_or_else(|| "Composer is not installed in DevPanel/bin/composer.".to_string())?;
+            if !script_is_declared(&project.join("composer.json"), &script) {
+                return Err(format!("Script '{script}' is not declared in composer.json."));
+            }
+            let mut cmd = tokio::process::Command::new(composer_path);
+            cmd.args(["run-script", script.as_str()]);
+            cmd
+        }
+        // Laravel's own long-running dev watchers. Fixed allow-list (not
+        // arbitrary artisan text from the UI) since these don't come from a
+        // project manifest the way JS/composer scripts do.
+        "artisan" => {
+            let php_path = scaffold::find_tool(&root, "php", "php.exe")
+                .ok_or_else(|| "PHP is not installed in DevPanel/bin/php.".to_string())?;
+            if !project.join("artisan").is_file() {
+                return Err("This project has no artisan file.".into());
+            }
+            let artisan_args: &[&str] = match script.as_str() {
+                "serve" => &["artisan", "serve"],
+                "queue:work" => &["artisan", "queue:work"],
+                _ => return Err("Unsupported artisan watcher.".into()),
+            };
+            let mut cmd = tokio::process::Command::new(php_path);
+            cmd.args(artisan_args);
+            cmd
+        }
+        _ => return Err("Unsupported script source.".into()),
+    };
+
+    command
+        .current_dir(&project)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Could not start '{script}': {error}"))?;
+
+    let output_event = format!("project-script-output::{id}::{source}::{script}");
+    if let Some(stdout) = child.stdout.take() {
+        let app = app.clone();
+        let output_event = output_event.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = app.emit(&output_event, line);
+            }
+        });
+    }
+    if let Some(stderr) = child.stderr.take() {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let _ = app.emit(&output_event, line);
+            }
+        });
+    }
+
+    let key = format!("{id}:{source}:{script}");
+    let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel::<()>();
+    {
+        let mut running = state.running_scripts.lock().await;
+        if let Some(old_tx) = running.insert(key.clone(), kill_tx) {
+            let _ = old_tx.send(());
+        }
+    }
+
+    let exit_event = format!("project-script-exit::{id}::{source}::{script}");
+    tauri::async_runtime::spawn(async move {
+        let exit_code = tokio::select! {
+            status = child.wait() => status.ok().and_then(|s| s.code()).unwrap_or(-1),
+            _ = &mut kill_rx => {
+                let _ = child.kill().await;
+                -1
+            }
+        };
+        app.state::<AppState>().running_scripts.lock().await.remove(&key);
+        let _ = app.emit(&exit_event, exit_code);
+    });
+
+    Ok(())
+}
+
+/// Stops a script started by `start_project_script`. A no-op if it already
+/// exited on its own.
+#[tauri::command]
+pub async fn stop_project_script(
+    id: String,
+    source: String,
+    script: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let key = format!("{id}:{source}:{script}");
+    if let Some(kill_tx) = state.running_scripts.lock().await.remove(&key) {
+        let _ = kill_tx.send(());
+    }
+    Ok(())
 }
 
 /// Starts an allow-listed developer application that is owned by DevPanel's
@@ -1833,6 +2095,46 @@ pub async fn launch_workspace_editor(
         format!("Could not open {editor}. Install its command-line launcher, then retry: {error}")
     })?;
     Ok(())
+}
+
+/// Returns the editor ids whose command-line launcher is reachable on PATH.
+/// Only installed editors should be offered in the "Open with" menu.
+#[tauri::command]
+pub fn get_available_editors() -> Vec<String> {
+    const EDITORS: &[(&str, &str)] = &[
+        ("vscode", "code"),
+        ("cursor", "cursor"),
+        ("sublime", "subl"),
+        ("claude", "claude"),
+        ("codex", "codex"),
+    ];
+    EDITORS
+        .iter()
+        .filter(|(_, command)| command_on_path(command))
+        .map(|(id, _)| id.to_string())
+        .collect()
+}
+
+/// Checks whether a command-line launcher is reachable through PATH.
+fn command_on_path(command: &str) -> bool {
+    let path = match std::env::var("PATH") {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let extensions: &[&str] = if cfg!(windows) {
+        &["exe", "cmd", "bat"]
+    } else {
+        &[""]
+    };
+    std::env::split_paths(&path).any(|dir| {
+        extensions.iter().any(|extension| {
+            let mut candidate = dir.join(command);
+            if !extension.is_empty() {
+                candidate.set_extension(extension);
+            }
+            candidate.is_file()
+        })
+    })
 }
 
 async fn active_stack(state: &AppState) -> Result<environment::StackDefinition, String> {

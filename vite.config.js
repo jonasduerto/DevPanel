@@ -1,7 +1,6 @@
 import { defineConfig } from "vite";
 import { sveltekit } from "@sveltejs/kit/vite";
 import adapter from "@sveltejs/adapter-static";
-import tailwindcss from "@tailwindcss/vite";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
@@ -9,7 +8,6 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [
-    tailwindcss(),
     sveltekit({
       adapter: adapter({ fallback: "index.html" }),
       alias: {
@@ -35,8 +33,15 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // User projects and local runtimes are runtime data, not DevPanel
+      // source. Nested Vite configs otherwise stall the Svelte transport.
+      ignored: [
+        "**/src-tauri/**",
+        "**/www/**",
+        "**/data/**",
+        "**/bin/**",
+        "**/release/**",
+      ],
     },
   },
 }));
